@@ -4,6 +4,7 @@ from collections.abc import Callable
 import csv
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from itertools import zip_longest
 from pathlib import Path
 from typing import Mapping, Sequence
 
@@ -203,8 +204,14 @@ class DataManager:
         if not csv_path.is_file():
             raise MissingFileError(f"CSV path is not a file: {csv_path}")
 
+        unique_headers = _read_unique_csv_headers(csv_path)
         if pl is None:
-            return self._open_csv_stdlib(csv_path, cancel_token=cancel_token, progress_callback=progress_callback)
+            return self._open_csv_stdlib(
+                csv_path,
+                unique_headers=unique_headers,
+                cancel_token=cancel_token,
+                progress_callback=progress_callback,
+            )
 
         try:
             _report(progress_callback, 1, 4, "Reading preview rows")
@@ -212,6 +219,7 @@ class DataManager:
                 csv_path,
                 n_rows=self.preview_rows,
                 infer_schema_length=min(self.preview_rows, self.infer_schema_length),
+                new_columns=unique_headers,
                 ignore_errors=False,
             )
         except Exception as exc:
@@ -222,7 +230,7 @@ class DataManager:
 
         _raise_if_cancelled(cancel_token)
         _report(progress_callback, 2, 4, "Inspecting CSV schema")
-        schema = self._read_schema(csv_path, preview_frame)
+        schema = self._read_schema(csv_path, preview_frame, unique_headers=unique_headers)
         _raise_if_cancelled(cancel_token)
         _report(progress_callback, 3, 4, "Profiling columns")
         profiles = [
@@ -250,12 +258,18 @@ class DataManager:
 
         try:
             if pl is None:
-                headers, rows = _read_csv_preview(metadata.path, rows=rows)
+                headers, rows = _read_csv_preview(
+                    metadata.path,
+                    rows=rows,
+                    unique_headers=_read_unique_csv_headers(metadata.path),
+                )
                 return CSVPreview(headers=headers, rows=rows)
+            unique_headers = _read_unique_csv_headers(metadata.path)
             frame = pl.read_csv(
                 metadata.path,
                 n_rows=rows,
                 infer_schema_length=min(rows, self.infer_schema_length),
+                new_columns=unique_headers,
                 ignore_errors=False,
             )
         except Exception as exc:
@@ -404,11 +418,12 @@ class DataManager:
         self,
         csv_path: Path,
         *,
+        unique_headers: Sequence[str],
         cancel_token: object | None,
         progress_callback: Callable[[int, int, str], None] | None,
     ) -> CSVMetadata:
         _report(progress_callback, 1, 4, "Reading preview rows")
-        headers, preview_rows = _read_csv_preview(csv_path, rows=self.preview_rows)
+        headers, preview_rows = _read_csv_preview(csv_path, rows=self.preview_rows, unique_headers=unique_headers)
         if not headers:
             raise EmptyDataError(f"CSV file '{csv_path}' does not contain any columns.")
 
@@ -522,12 +537,19 @@ class DataManager:
             warnings=warnings,
         )
 
-    def _read_schema(self, csv_path: Path, preview_frame: pl.DataFrame) -> Mapping[str, pl.DataType]:
+    def _read_schema(
+        self,
+        csv_path: Path,
+        preview_frame: pl.DataFrame,
+        *,
+        unique_headers: Sequence[str],
+    ) -> Mapping[str, pl.DataType]:
         try:
             return dict(
                 pl.scan_csv(
                     csv_path,
                     infer_schema_length=self.infer_schema_length,
+                    new_columns=list(unique_headers),
                     ignore_errors=False,
                 ).collect_schema()
             )
@@ -617,9 +639,11 @@ class DataManager:
 
     def _collect_selected(self, csv_path: Path, selected_columns: Sequence[str]) -> pl.DataFrame:
         self._validate_requested_cell_budget(csv_path, selected_columns)
+        unique_headers = _read_unique_csv_headers(csv_path)
         lazy_frame = pl.scan_csv(
             csv_path,
             infer_schema_length=self.infer_schema_length,
+            new_columns=unique_headers,
             ignore_errors=True,
         ).select(list(selected_columns))
         try:
@@ -631,10 +655,12 @@ class DataManager:
         if self.max_loaded_cells is None:
             return
         try:
+            unique_headers = _read_unique_csv_headers(csv_path)
             row_count_frame = (
                 pl.scan_csv(
                     csv_path,
                     infer_schema_length=self.infer_schema_length,
+                    new_columns=unique_headers,
                     ignore_errors=True,
                 )
                 .select(pl.len())
@@ -877,16 +903,22 @@ def _values_to_datetime64(values: Sequence[object]) -> np.ndarray:
     return np.asarray(parsed_values, dtype="datetime64[ns]")
 
 
-def _read_csv_preview(path: Path, *, rows: int) -> tuple[list[str], list[dict[str, object]]]:
+def _read_csv_preview(
+    path: Path,
+    *,
+    rows: int,
+    unique_headers: Sequence[str] | None = None,
+) -> tuple[list[str], list[dict[str, object]]]:
     try:
         with path.open(newline="", encoding="utf-8-sig") as handle:
-            reader = csv.DictReader(handle)
-            headers = list(reader.fieldnames or [])
+            reader = csv.reader(handle)
+            raw_headers = next(reader, [])
+            headers = list(unique_headers or _unique_column_names(raw_headers))
             preview: list[dict[str, object]] = []
-            for index, row in enumerate(reader):
+            for index, values in enumerate(reader):
                 if index >= rows:
                     break
-                preview.append(dict(row))
+                preview.append(_row_dict(headers, values))
             return headers, preview
     except Exception as exc:
         raise UnreadableCSVError(f"Could not read CSV file '{path}': {exc}") from exc
@@ -895,13 +927,45 @@ def _read_csv_preview(path: Path, *, rows: int) -> tuple[list[str], list[dict[st
 def _read_selected_csv_rows(path: Path, selected_columns: Sequence[str]) -> list[dict[str, object]]:
     try:
         with path.open(newline="", encoding="utf-8-sig") as handle:
-            reader = csv.DictReader(handle)
+            reader = csv.reader(handle)
+            headers = _unique_column_names(next(reader, []))
             rows: list[dict[str, object]] = []
-            for row in reader:
+            for values in reader:
+                row = _row_dict(headers, values)
                 rows.append({column: row.get(column) for column in selected_columns})
             return rows
     except Exception as exc:
         raise UnreadableCSVError(f"Could not load selected CSV columns: {exc}") from exc
+
+
+def _read_unique_csv_headers(path: Path) -> list[str]:
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.reader(handle)
+            return _unique_column_names(next(reader, []))
+    except Exception as exc:
+        raise UnreadableCSVError(f"Could not read CSV header from '{path}': {exc}") from exc
+
+
+def _unique_column_names(raw_headers: Sequence[object]) -> list[str]:
+    counts: dict[str, int] = {}
+    names: list[str] = []
+    for index, raw_header in enumerate(raw_headers, start=1):
+        base = str(raw_header).strip() if raw_header is not None else ""
+        if not base:
+            base = f"Column {index}"
+        count = counts.get(base, 0) + 1
+        counts[base] = count
+        names.append(base if count == 1 else f"{base} {count}")
+    return names
+
+
+def _row_dict(headers: Sequence[str], values: Sequence[object]) -> dict[str, object]:
+    return {
+        header: "" if value is None else value
+        for header, value in zip_longest(headers, values, fillvalue="")
+        if header
+    }
 
 
 def _parse_datetime_value(value: object) -> datetime | None:

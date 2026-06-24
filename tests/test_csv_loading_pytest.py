@@ -169,6 +169,43 @@ def test_auto_target_loading_can_skip_text_only_leftover_columns(workspace_tmp: 
     assert any("Skipped target column 'operator_note'" in warning for warning in loaded.warnings)
 
 
+def test_duplicate_target_headers_are_numbered_and_loaded_separately(workspace_tmp: Path) -> None:
+    path = workspace_tmp / "duplicate_headers.csv"
+    _write_rows(
+        path,
+        ["time_s", "Cell voltage", "Cell voltage", "Cell voltage", "aux_current"],
+        [
+            [0, 3.1, 3.2, 3.3, 10],
+            [1, 3.4, 3.5, 3.6, 11],
+            [2, 3.7, "", 3.9, 12],
+        ],
+    )
+
+    manager = DataManager(preview_rows=3)
+    metadata = manager.open_csv(path)
+
+    assert metadata.column_names == [
+        "time_s",
+        "Cell voltage",
+        "Cell voltage 2",
+        "Cell voltage 3",
+        "aux_current",
+    ]
+
+    loaded = manager.select_columns(
+        time_column="time_s",
+        target_columns=["Cell voltage", "Cell voltage 2", "Cell voltage 3"],
+        auxiliary_columns=["aux_current"],
+    )
+
+    assert list(loaded.targets) == ["Cell voltage", "Cell voltage 2", "Cell voltage 3"]
+    assert loaded.targets["Cell voltage"][0] == 3.1
+    assert loaded.targets["Cell voltage 2"][0] == 3.2
+    assert loaded.targets["Cell voltage 3"][0] == 3.3
+    assert loaded.targets["Cell voltage 2"][2] != loaded.targets["Cell voltage 2"][2]
+    assert list(loaded.auxiliaries) == ["aux_current"]
+
+
 def test_sample_data_generator_writes_expected_columns(workspace_tmp: Path) -> None:
     path = workspace_tmp / "sample.csv"
 

@@ -485,6 +485,12 @@ class TimeSeriesPlotWidget(QWidget):
             return array
         if self._source_valid_time_mask is not None and self._source_order is not None and array.size == self._source_valid_time_mask.size:
             return array[self._source_valid_time_mask][self._source_order]
+        if array.size < self._time.size:
+            aligned = np.full(self._time.size, np.nan, dtype=float)
+            aligned[: array.size] = array
+            return aligned
+        if array.size > self._time.size:
+            return array[: self._time.size]
         raise ValueError(f"Series '{name}' has {array.size} values for {self._time.size} time samples.")
 
     def _add_curve(self, *, name: str, values: np.ndarray, color: str, axis_id: str, role: str, dashed: bool) -> None:

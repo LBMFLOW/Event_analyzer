@@ -10,7 +10,6 @@ from event_analyzer.data.data_manager import (
     DataManagerError,
     InvalidTimeColumnError,
     NonNumericColumnError,
-    TooManyInvalidValuesError,
 )
 from scripts.generate_sample_csv import generate
 
@@ -112,23 +111,27 @@ def test_csv_loading_accepts_ragged_target_columns(workspace_tmp: Path) -> None:
     assert loaded.warnings
 
 
-def test_csv_loading_rejects_auxiliary_columns_with_too_many_missing_values(workspace_tmp: Path) -> None:
-    path = workspace_tmp / "too_many_missing_aux.csv"
+def test_csv_loading_accepts_ragged_auxiliary_columns(workspace_tmp: Path) -> None:
+    path = workspace_tmp / "ragged_auxiliary.csv"
     _write_rows(
         path,
-        ["time_s", "case_a", "mostly_missing_aux"],
+        ["time_s", "case_a", "ends_early_aux"],
         [[0, 1.0, 1.0], [1, 2.0, ""], [2, 3.0, ""], [3, 4.0, ""]],
     )
 
     manager = DataManager(preview_rows=1, min_numeric_valid_ratio=0.75)
     manager.open_csv(path)
 
-    with pytest.raises(TooManyInvalidValuesError):
-        manager.select_columns(
-            time_column="time_s",
-            target_columns=["case_a"],
-            auxiliary_columns=["mostly_missing_aux"],
-        )
+    loaded = manager.select_columns(
+        time_column="time_s",
+        target_columns=["case_a"],
+        auxiliary_columns=["ends_early_aux"],
+    )
+
+    assert loaded.row_count == 4
+    assert loaded.auxiliaries["ends_early_aux"][0] == 1.0
+    assert loaded.auxiliaries["ends_early_aux"][1] != loaded.auxiliaries["ends_early_aux"][1]
+    assert loaded.warnings
 
 
 def test_target_and_auxiliary_column_selection_are_loaded_separately(workspace_tmp: Path) -> None:

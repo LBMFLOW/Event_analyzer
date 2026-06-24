@@ -673,11 +673,12 @@ class DataManager:
         profiles = {profile.name: profile for profile in self.metadata.columns}
         for column in columns:
             profile = profiles[column]
-            if role == "target":
-                # Target/case columns are allowed to be ragged: a case may end
-                # before the global time axis ends, leaving blanks that become
-                # NaN plot gaps. Full numeric validation happens after loading,
-                # where we only require at least one usable numeric value.
+            if role in {"target", "auxiliary"}:
+                # Target/case and auxiliary columns are allowed to be ragged:
+                # a series may end before the global time axis ends, leaving
+                # blanks that become NaN plot gaps. Full numeric validation
+                # happens after loading, where we only require at least one
+                # usable numeric value.
                 continue
             if not profile.is_numeric:
                 raise NonNumericColumnError(
@@ -815,6 +816,7 @@ class DataManager:
         values = _series_to_float(series)
         values_with_valid_time = values[valid_time_mask]
         valid_ratio = _finite_ratio(values_with_valid_time)
+        effective_valid_ratio = _finite_ratio(_trim_trailing_invalid(values_with_valid_time))
         invalid_ratio = 1.0 - valid_ratio
 
         if valid_ratio == 0.0:
@@ -822,7 +824,7 @@ class DataManager:
                 f"Selected {role} column '{name}' contains no usable numeric values after time filtering."
             )
 
-        if role != "target" and valid_ratio < self.min_numeric_valid_ratio:
+        if role != "target" and effective_valid_ratio < self.min_numeric_valid_ratio:
             raise TooManyInvalidValuesError(
                 f"Selected {role} column '{name}' has {invalid_ratio:.1%} missing or invalid values "
                 f"after time filtering; allowed maximum is {(1.0 - self.min_numeric_valid_ratio):.0%}."
@@ -837,7 +839,7 @@ class DataManager:
             else:
                 warnings.append(
                     f"Column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
-                    "they are represented as NaN gaps."
+                    "they are represented as NaN gaps, so shorter auxiliary series can end early."
                 )
 
         return values_with_valid_time[order]
@@ -855,6 +857,7 @@ class DataManager:
         numeric = _values_to_float(values)
         values_with_valid_time = numeric[valid_time_mask]
         valid_ratio = _finite_ratio(values_with_valid_time)
+        effective_valid_ratio = _finite_ratio(_trim_trailing_invalid(values_with_valid_time))
         invalid_ratio = 1.0 - valid_ratio
 
         if valid_ratio == 0.0:
@@ -862,7 +865,7 @@ class DataManager:
                 f"Selected {role} column '{name}' contains no usable numeric values after time filtering."
             )
 
-        if role != "target" and valid_ratio < self.min_numeric_valid_ratio:
+        if role != "target" and effective_valid_ratio < self.min_numeric_valid_ratio:
             raise TooManyInvalidValuesError(
                 f"Selected {role} column '{name}' has {invalid_ratio:.1%} missing or invalid values "
                 f"after time filtering; allowed maximum is {(1.0 - self.min_numeric_valid_ratio):.0%}."
@@ -877,7 +880,7 @@ class DataManager:
             else:
                 warnings.append(
                     f"Column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
-                    "they are represented as NaN gaps."
+                    "they are represented as NaN gaps, so shorter auxiliary series can end early."
                 )
         return values_with_valid_time[order]
 
@@ -1202,6 +1205,19 @@ def _finite_ratio(values: np.ndarray) -> float:
     if values.size == 0:
         return 0.0
     return float(np.isfinite(values).sum() / values.size)
+
+
+def _trim_trailing_invalid(values: np.ndarray) -> np.ndarray:
+    """Return values up to the last finite sample.
+
+    CSV exports often store shorter time-series columns as trailing empty cells.
+    Those blanks should not make an otherwise valid shorter series fail numeric
+    validation.
+    """
+    finite_indices = np.flatnonzero(np.isfinite(values))
+    if finite_indices.size == 0:
+        return values[:0]
+    return values[: int(finite_indices[-1]) + 1]
 
 
 def _datetime_finite_ratio(values: np.ndarray) -> float:

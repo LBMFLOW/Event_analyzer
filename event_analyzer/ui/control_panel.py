@@ -8,15 +8,16 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QDoubleSpinBox,
     QFormLayout,
-    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QListWidget,
     QPushButton,
     QProgressBar,
     QScrollArea,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -177,6 +178,8 @@ class ControlPanel(QWidget):
     case_visibility_changed = pyqtSignal(str, bool)
     case_color_changed = pyqtSignal(str, str)
     legend_visibility_changed = pyqtSignal(bool)
+    csv_layout_apply_requested = pyqtSignal()
+    plot_settings_changed = pyqtSignal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -191,6 +194,17 @@ class ControlPanel(QWidget):
         self.open_button = QPushButton("Open CSV")
         self.cancel_task_button = QPushButton("Cancel")
         self.cancel_task_button.setVisible(False)
+        self.header_row_spin = QSpinBox()
+        self.header_row_spin.setRange(1, 1_000_000)
+        self.header_row_spin.setValue(1)
+        self.units_row_spin = QSpinBox()
+        self.units_row_spin.setRange(0, 1_000_000)
+        self.units_row_spin.setSpecialValueText("None")
+        self.units_row_spin.setValue(0)
+        self.data_start_row_spin = QSpinBox()
+        self.data_start_row_spin.setRange(1, 1_000_000)
+        self.data_start_row_spin.setValue(2)
+        self.apply_csv_layout_button = QPushButton("Apply CSV rows")
         self.time_column_combo = QComboBox()
         self.target_selector = SearchableColumnSelector("Auto target case columns")
         self.auxiliary_selector = SearchableColumnSelector("Auxiliary columns")
@@ -222,6 +236,11 @@ class ControlPanel(QWidget):
         self.update_plot_button = QPushButton("Plot / Update")
         self.show_legend_checkbox = QCheckBox("Show legend")
         self.show_legend_checkbox.setChecked(True)
+        self.plot_title_edit = QLineEdit("Time-series plot")
+        self.x_axis_title_edit = QLineEdit()
+        self.x_axis_title_edit.setPlaceholderText("Auto")
+        self.y_axis_title_edit = QLineEdit()
+        self.y_axis_title_edit.setPlaceholderText("Auto")
 
         self._build_layout()
         self._connect_signals()
@@ -248,6 +267,26 @@ class ControlPanel(QWidget):
     def set_file_info(self, path: str, row_count: int | None = None) -> None:
         self.file_label.setText(path)
         self.row_count_label.setText("Rows: -" if row_count is None else f"Rows: {row_count:,}")
+
+    def csv_layout_rows(self) -> tuple[int, int, int]:
+        return self.header_row_spin.value(), self.units_row_spin.value(), self.data_start_row_spin.value()
+
+    def set_csv_layout(self, *, header_row: int, units_row: int | None, data_start_row: int) -> None:
+        with QSignalBlocker(self.header_row_spin), QSignalBlocker(self.units_row_spin), QSignalBlocker(self.data_start_row_spin):
+            self.header_row_spin.setValue(max(1, int(header_row)))
+            self.units_row_spin.setValue(0 if units_row is None else max(1, int(units_row)))
+            self.data_start_row_spin.setValue(max(1, int(data_start_row)))
+
+    def plot_settings(self) -> tuple[str, str, str]:
+        return (
+            self.plot_title_edit.text().strip(),
+            self.x_axis_title_edit.text().strip(),
+            self.y_axis_title_edit.text().strip(),
+        )
+
+    def set_plot_axis_placeholders(self, *, x_axis: str, y_axis: str) -> None:
+        self.x_axis_title_edit.setPlaceholderText(x_axis or "Auto")
+        self.y_axis_title_edit.setPlaceholderText(y_axis or "Auto")
 
     def set_columns(
         self,
@@ -374,6 +413,12 @@ class ControlPanel(QWidget):
         file_buttons.addWidget(self.open_button)
         file_buttons.addWidget(self.cancel_task_button)
         file_layout.addLayout(file_buttons)
+        file_form = QFormLayout()
+        file_form.addRow("Header row", self.header_row_spin)
+        file_form.addRow("Units row", self.units_row_spin)
+        file_form.addRow("Data start row", self.data_start_row_spin)
+        file_layout.addLayout(file_form)
+        file_layout.addWidget(self.apply_csv_layout_button)
         file_layout.addWidget(self.file_label)
         file_layout.addWidget(self.row_count_label)
         file_layout.addWidget(self.progress_bar)
@@ -427,9 +472,14 @@ class ControlPanel(QWidget):
         divider_layout.addLayout(buttons)
 
         plot_group = QGroupBox("Plot")
-        plot_layout = QGridLayout(plot_group)
-        plot_layout.addWidget(self.update_plot_button, 0, 0)
-        plot_layout.addWidget(self.show_legend_checkbox, 1, 0)
+        plot_layout = QVBoxLayout(plot_group)
+        plot_form = QFormLayout()
+        plot_form.addRow("Plot title", self.plot_title_edit)
+        plot_form.addRow("X-axis title", self.x_axis_title_edit)
+        plot_form.addRow("Y-axis title", self.y_axis_title_edit)
+        plot_layout.addLayout(plot_form)
+        plot_layout.addWidget(self.show_legend_checkbox)
+        plot_layout.addWidget(self.update_plot_button)
 
         layout.addWidget(file_group)
         layout.addWidget(column_group)
@@ -452,6 +502,7 @@ class ControlPanel(QWidget):
     def _connect_signals(self) -> None:
         self.open_button.clicked.connect(self.open_csv_requested)
         self.cancel_task_button.clicked.connect(self.cancel_task_requested)
+        self.apply_csv_layout_button.clicked.connect(self.csv_layout_apply_requested)
         self.update_plot_button.clicked.connect(self.update_plot_requested)
         self.time_column_combo.currentTextChanged.connect(self._time_column_changed)
         self.active_case_combo.currentTextChanged.connect(self.active_case_changed)
@@ -466,6 +517,9 @@ class ControlPanel(QWidget):
         self.case_style_table.color_changed.connect(self.case_color_changed)
         self.case_style_table.itemChanged.connect(self._case_style_item_changed)
         self.show_legend_checkbox.toggled.connect(self.legend_visibility_changed)
+        self.plot_title_edit.editingFinished.connect(self.plot_settings_changed)
+        self.x_axis_title_edit.editingFinished.connect(self.plot_settings_changed)
+        self.y_axis_title_edit.editingFinished.connect(self.plot_settings_changed)
 
     def _target_selection_changed(self) -> None:
         cases = self.selected_target_columns()

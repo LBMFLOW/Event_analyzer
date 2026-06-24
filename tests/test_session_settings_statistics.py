@@ -30,6 +30,12 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
             target_columns=["case_a"],
             auxiliary_columns=["temperature"],
             auxiliary_axes={"temperature": "y2"},
+            header_row=2,
+            units_row=3,
+            data_start_row=4,
+            plot_title="My plot",
+            x_axis_title="Time (s)",
+            y_axis_title="Voltage (V)",
             dividers=[{"id": "d1", "time": 1.0}],
             threshold=2.5,
             region=(1.0, 3.0),
@@ -43,6 +49,12 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
 
         self.assertEqual(restored.csv_path, "sample.csv")
         self.assertEqual(restored.auxiliary_axes, {"temperature": "y2"})
+        self.assertEqual(restored.header_row, 2)
+        self.assertEqual(restored.units_row, 3)
+        self.assertEqual(restored.data_start_row, 4)
+        self.assertEqual(restored.plot_title, "My plot")
+        self.assertEqual(restored.x_axis_title, "Time (s)")
+        self.assertEqual(restored.y_axis_title, "Voltage (V)")
         self.assertEqual(restored.dividers[0]["time"], 1.0)
         self.assertEqual(restored.region, (1.0, 3.0))
         self.assertEqual(restored.colors["case_a"], "#ff0000")

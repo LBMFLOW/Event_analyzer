@@ -65,6 +65,9 @@ class TimeSeriesPlotWidget(QWidget):
         self._active_case: str | None = None
         self._title = "Time-series plot"
         self._time_label = "Time"
+        self._x_axis_label = "Time"
+        self._y1_axis_label = "y1"
+        self._extra_axis_labels: dict[str, str] = {}
         self._curves: dict[str, CurveHandle] = {}
         self._target_values: dict[str, np.ndarray] = {}
         self._auxiliary_values: dict[str, np.ndarray] = {}
@@ -307,8 +310,28 @@ class TimeSeriesPlotWidget(QWidget):
 
     def set_title(self, title: str) -> None:
         """Set the plot title shown in the widget and SVG export."""
-        self._title = title
-        self.plotItem.setTitle(title)
+        self._title = title or "Time-series plot"
+        self.plotItem.setTitle(self._title)
+
+    def set_axis_labels(
+        self,
+        *,
+        x_label: str | None = None,
+        y1_label: str | None = None,
+        extra_axis_labels: Mapping[str, str] | None = None,
+    ) -> None:
+        """Set user-facing axis labels for the main and extra y axes."""
+        if x_label is not None:
+            self._x_axis_label = x_label or self._time_label
+            self.plotItem.setLabel("bottom", self._x_axis_label)
+            self.time_axis_item.setLabel(self._x_axis_label)
+        if y1_label is not None:
+            self._y1_axis_label = y1_label or "y1"
+            self.plotItem.setLabel("left", self._y1_axis_label)
+        if extra_axis_labels is not None:
+            self._extra_axis_labels = dict(extra_axis_labels)
+            for axis_id, axis in self._extra_axes.items():
+                axis.setLabel(self._extra_axis_labels.get(axis_id, axis_id))
 
     def reset_view(self) -> None:
         """Auto-range all visible axes."""
@@ -353,7 +376,9 @@ class TimeSeriesPlotWidget(QWidget):
         """Compatibility helper for earlier code that supplies a TimeAxis."""
         self.time_axis_item.set_time_axis(axis)
         self._time_label = axis.name
-        self.plotItem.setLabel("bottom", axis.name)
+        unit = getattr(axis, "display_unit", "")
+        self._x_axis_label = f"{axis.name} ({unit})" if unit else axis.name
+        self.plotItem.setLabel("bottom", self._x_axis_label)
 
     def clear_curves(self, role: str | None = None) -> None:
         """Remove target, auxiliary, or all curves."""
@@ -404,8 +429,8 @@ class TimeSeriesPlotWidget(QWidget):
         self.plot_widget.setMouseEnabled(x=True, y=True)
         self.plot_widget.showGrid(x=True, y=True, alpha=0.25)
         self.plotItem.setTitle(self._title)
-        self.plotItem.setLabel("bottom", self._time_label)
-        self.plotItem.setLabel("left", "y1")
+        self.plotItem.setLabel("bottom", self._x_axis_label)
+        self.plotItem.setLabel("left", self._y1_axis_label)
         self.plotItem.setMenuEnabled(False)
         self.plotItem.addItem(self._tracer_line, ignoreBounds=True)
         self.plotItem.addItem(self._trace_marker, ignoreBounds=True)
@@ -447,8 +472,9 @@ class TimeSeriesPlotWidget(QWidget):
         self._source_order = order
         self._time = raw[valid][order]
         self._time_label = time_label
+        self._x_axis_label = time_label
         self.time_axis_item.set_time_axis(None)
-        self.plotItem.setLabel("bottom", time_label)
+        self.plotItem.setLabel("bottom", self._x_axis_label)
         self._configure_slider()
 
     def _align_values(self, values: Sequence[float], *, name: str) -> np.ndarray:
@@ -508,7 +534,7 @@ class TimeSeriesPlotWidget(QWidget):
         axis_number = _axis_number(axis_id)
         orientation = "right" if axis_number % 2 == 0 else "left"
         axis = pg.AxisItem(orientation)
-        axis.setLabel(axis_id)
+        axis.setLabel(self._extra_axis_labels.get(axis_id, axis_id))
         view = pg.ViewBox()
         self.plotItem.scene().addItem(view)
         axis.linkToView(view)

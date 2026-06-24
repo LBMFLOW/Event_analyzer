@@ -206,6 +206,32 @@ def test_duplicate_target_headers_are_numbered_and_loaded_separately(workspace_t
     assert list(loaded.auxiliaries) == ["aux_current"]
 
 
+def test_csv_layout_autodetects_header_units_and_data_start_rows(workspace_tmp: Path) -> None:
+    path = workspace_tmp / "header_units_rows.csv"
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["Simulation export", "", ""])
+        writer.writerow(["time_s", "case_a", "aux_pressure"])
+        writer.writerow(["s", "V", "Pa"])
+        writer.writerows([[0, 1.0, 101.0], [1, 2.0, 102.0], [2, 3.0, 103.0]])
+
+    manager = DataManager(preview_rows=3)
+    metadata = manager.open_csv(path)
+    loaded = manager.select_columns(
+        time_column="time_s",
+        target_columns=["case_a"],
+        auxiliary_columns=["aux_pressure"],
+    )
+
+    assert metadata.layout.header_row == 2
+    assert metadata.layout.units_row == 3
+    assert metadata.layout.data_start_row == 4
+    assert metadata.units == {"time_s": "s", "case_a": "V", "aux_pressure": "Pa"}
+    assert loaded.units["time_s"] == "s"
+    assert loaded.units["case_a"] == "V"
+    assert loaded.row_count == 3
+
+
 def test_sample_data_generator_writes_expected_columns(workspace_tmp: Path) -> None:
     path = workspace_tmp / "sample.csv"
 

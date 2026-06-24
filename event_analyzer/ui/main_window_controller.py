@@ -43,6 +43,7 @@ class MainWindowController:
         self.case_colors: dict[str, str] = {}
         self.case_visibility: dict[str, bool] = {}
         self.case_units: dict[str, str] = {}
+        self.column_units: dict[str, str] = {}
         self.current_slider_time: float | None = None
         self.divider_manager = DividerManager(allow_outside_range=True)
         self.region_selector: RegionSelector | None = None
@@ -94,6 +95,8 @@ class MainWindowController:
         panel.case_visibility_changed.connect(self.case_visibility_changed)
         panel.case_color_changed.connect(self.case_color_changed)
         panel.legend_visibility_changed.connect(plot.set_legend_visible)
+        panel.csv_layout_apply_requested.connect(self.apply_csv_layout)
+        panel.plot_settings_changed.connect(self.apply_plot_settings)
 
         plot.request_add_divider.connect(self.add_divider_at)
         plot.request_add_threshold.connect(self.create_threshold_from_plot)
@@ -112,13 +115,23 @@ class MainWindowController:
         if path:
             self.open_csv_path(path)
 
-    def open_csv_path(self, path: str) -> None:
+    def open_csv_path(
+        self,
+        path: str,
+        *,
+        header_row: int | None = None,
+        units_row: int | None = None,
+        data_start_row: int | None = None,
+    ) -> None:
         if not Path(path).exists():
             self._warn(f"CSV file does not exist:\n{path}")
             return
         started = self.tasks.start(
             self._inspect_csv,
             path,
+            header_row,
+            units_row,
+            data_start_row,
             on_finished=self.csv_loaded,
             on_failed=self.task_failed,
             pass_task_context=True,
@@ -135,6 +148,8 @@ class MainWindowController:
         numeric_columns = list(metadata.get("numeric_columns", []))
         likely_time_columns = list(metadata.get("likely_time_columns", []))
         preview = metadata.get("preview", {})
+        layout = dict(metadata.get("layout", {}))
+        self.column_units = {str(key): str(value) for key, value in dict(metadata.get("units", {})).items()}
 
         self.current_csv_path = path
         self.settings.add_recent_file(path)
@@ -143,7 +158,20 @@ class MainWindowController:
 
         panel = self.window.control_panel
         panel.set_file_info(path, metadata.get("row_count"))
+        panel.set_csv_layout(
+            header_row=int(layout.get("header_row", 1)),
+            units_row=layout.get("units_row"),
+            data_start_row=int(layout.get("data_start_row", 2)),
+        )
         panel.set_columns(columns, numeric_columns=numeric_columns, likely_time_columns=likely_time_columns)
+        target_candidates = panel.selected_target_columns()
+        panel.set_case_styles(
+            target_candidates,
+            colors={name: self.case_colors.get(name, "") for name in target_candidates},
+            visibility={name: self.case_visibility.get(name, True) for name in target_candidates},
+            units={name: self.column_units.get(name) or unit_for_column(name) for name in target_candidates},
+        )
+        self._update_plot_axis_placeholders()
         self.window.workspace.preview_table.set_preview(
             list(preview.get("headers", [])),
             list(preview.get("rows", [])),
@@ -165,6 +193,7 @@ class MainWindowController:
         target_columns = panel.selected_target_columns()
         auxiliary_columns = panel.selected_auxiliary_columns()
         auxiliary_axes = panel.auxiliary_axis_assignments()
+        header_row, units_row, data_start_row = panel.csv_layout_rows()
         if not time_column:
             self._info("Select a time column before plotting.")
             return
@@ -178,6 +207,9 @@ class MainWindowController:
             time_column,
             target_columns,
             auxiliary_columns,
+            header_row,
+            units_row,
+            data_start_row,
             on_finished=self.plot_data_loaded,
             on_failed=self.task_failed,
             pass_task_context=True,
@@ -195,13 +227,23 @@ class MainWindowController:
 
         target_names = list(data.targets)
         auxiliary_names = list(data.auxiliaries)
-        self.case_units = {name: unit_for_column(name) for name in target_names}
+        self.column_units = {
+            name: self._unit_for_column(name, data)
+            for name in [data.time_column, *target_names, *auxiliary_names]
+        }
+        self.case_units = {name: self.column_units.get(name, "") for name in target_names}
         self._ensure_case_defaults(target_names, auxiliary_names)
 
         plot = self.window.workspace.main_plot.plot_widget
         target_colors = {name: self.case_colors[name] for name in target_names}
         auxiliary_colors = {name: self.case_colors[name] for name in auxiliary_names}
         auxiliary_axes = getattr(self, "_pending_auxiliary_axes", {})
+        plot_title, x_axis_title, y_axis_title = self.window.control_panel.plot_settings()
+        default_x_label = _label_with_unit(data.time_column, self.column_units.get(data.time_column, ""))
+        default_y_label = _target_axis_label(target_names, self.column_units)
+        x_label = x_axis_title or default_x_label
+        y_label = y_axis_title or default_y_label
+        extra_axis_labels = _auxiliary_axis_labels(auxiliary_names, auxiliary_axes, self.column_units)
 
         plot.set_data(
             data.time_values,
@@ -209,8 +251,19 @@ class MainWindowController:
             time_label=data.time_column,
             colors=target_colors,
         )
-        plot.set_time_axis(TimeAxis(data.time_column, data.time_values, bool(data.time_is_datetime)))
+        plot.set_time_axis(
+            TimeAxis(
+                data.time_column,
+                data.time_values,
+                bool(data.time_is_datetime),
+                display_unit=self.column_units.get(data.time_column, ""),
+            )
+        )
         plot.set_auxiliary_data(data.auxiliaries, auxiliary_axes, colors=auxiliary_colors)
+        plot.set_title(plot_title or "Time-series plot")
+        plot.set_axis_labels(x_label=x_label, y1_label=y_label, extra_axis_labels=extra_axis_labels)
+        self.window.control_panel.set_plot_axis_placeholders(x_axis=default_x_label, y_axis=default_y_label)
+        self.window.workspace.bar_chart.set_time_unit(self.column_units.get(data.time_column, "") or "time units")
         for name, visible in self.case_visibility.items():
             plot.set_curve_visible(name, visible)
 
@@ -275,7 +328,12 @@ class MainWindowController:
             return
         self.pending_session = session
         self._apply_theme(session.theme)
-        self.open_csv_path(session.csv_path)
+        self.open_csv_path(
+            session.csv_path,
+            header_row=session.header_row,
+            units_row=0 if session.units_row is None else session.units_row,
+            data_start_row=session.data_start_row,
+        )
 
     def save_main_plot_svg(self) -> None:
         path = self._choose_save_path("Save main plot SVG", "time_series.svg", "SVG files (*.svg)")
@@ -460,6 +518,38 @@ class MainWindowController:
         self.case_colors[case_name] = color
         self.window.workspace.main_plot.plot_widget.set_curve_color(case_name, color)
 
+    def apply_csv_layout(self) -> None:
+        if not self.current_csv_path:
+            self._info("Open a CSV file before applying CSV row settings.")
+            return
+        header_row, units_row, data_start_row = self.window.control_panel.csv_layout_rows()
+        self.open_csv_path(
+            self.current_csv_path,
+            header_row=header_row,
+            units_row=units_row,
+            data_start_row=data_start_row,
+        )
+
+    def apply_plot_settings(self) -> None:
+        if self.loaded_data is None:
+            return
+        plot = self.window.workspace.main_plot.plot_widget
+        plot_title, x_axis_title, y_axis_title = self.window.control_panel.plot_settings()
+        target_names = list(self.loaded_data.targets)
+        auxiliary_names = list(self.loaded_data.auxiliaries)
+        auxiliary_axes = self.window.control_panel.auxiliary_axis_assignments()
+        default_x_label = _label_with_unit(
+            self.loaded_data.time_column,
+            self.column_units.get(self.loaded_data.time_column, ""),
+        )
+        default_y_label = _target_axis_label(target_names, self.column_units)
+        plot.set_title(plot_title or "Time-series plot")
+        plot.set_axis_labels(
+            x_label=x_axis_title or default_x_label,
+            y1_label=y_axis_title or default_y_label,
+            extra_axis_labels=_auxiliary_axis_labels(auxiliary_names, auxiliary_axes, self.column_units),
+        )
+
     def column_selection_changed(self) -> None:
         cases = self.window.control_panel.selected_target_columns()
         self.window.control_panel.set_active_cases(cases)
@@ -467,8 +557,9 @@ class MainWindowController:
             cases,
             colors={name: self.case_colors.get(name, "") for name in cases},
             visibility={name: self.case_visibility.get(name, True) for name in cases},
-            units={name: unit_for_column(name) for name in cases},
+            units={name: self.column_units.get(name) or unit_for_column(name) for name in cases},
         )
+        self._update_plot_axis_placeholders()
 
     def task_failed(self, message: str) -> None:
         self.window.statusBar().showMessage("Task failed.")
@@ -586,6 +677,12 @@ class MainWindowController:
             target_columns=self.window.control_panel.selected_target_columns(),
             auxiliary_columns=self.window.control_panel.selected_auxiliary_columns(),
             auxiliary_axes=self.window.control_panel.auxiliary_axis_assignments(),
+            header_row=self.window.control_panel.csv_layout_rows()[0],
+            units_row=(None if self.window.control_panel.csv_layout_rows()[1] <= 0 else self.window.control_panel.csv_layout_rows()[1]),
+            data_start_row=self.window.control_panel.csv_layout_rows()[2],
+            plot_title=self.window.control_panel.plot_settings()[0] or "Time-series plot",
+            x_axis_title=self.window.control_panel.plot_settings()[1],
+            y_axis_title=self.window.control_panel.plot_settings()[2],
             dividers=self.divider_manager.serialize(),
             threshold=self.threshold_manager.value,
             region=self._selected_region_tuple(),
@@ -596,6 +693,14 @@ class MainWindowController:
 
     def _apply_session_to_controls(self, session: SessionState) -> None:
         panel = self.window.control_panel
+        panel.set_csv_layout(
+            header_row=session.header_row,
+            units_row=session.units_row,
+            data_start_row=session.data_start_row,
+        )
+        panel.plot_title_edit.setText(session.plot_title or "Time-series plot")
+        panel.x_axis_title_edit.setText(session.x_axis_title)
+        panel.y_axis_title_edit.setText(session.y_axis_title)
         panel.set_time_column(session.time_column)
         self.case_colors.update(session.colors)
         self.case_visibility.update(session.visibility)
@@ -635,6 +740,20 @@ class MainWindowController:
             self.case_colors.setdefault(name, color_for_index(index))
             self.case_visibility.setdefault(name, True)
 
+    def _update_plot_axis_placeholders(self) -> None:
+        panel = self.window.control_panel
+        time_column = panel.selected_time_column()
+        targets = panel.selected_target_columns()
+        panel.set_plot_axis_placeholders(
+            x_axis=_label_with_unit(time_column, self.column_units.get(time_column, "")) if time_column else "Auto",
+            y_axis=_target_axis_label(targets, self.column_units) if targets else "Auto",
+        )
+
+    def _unit_for_column(self, name: str, data: Any) -> str:
+        units = getattr(data, "units", {}) or {}
+        value = str(units.get(name, "") or "").strip()
+        return value or unit_for_column(name)
+
     def _choose_save_path(self, title: str, default_name: str, file_filter: str) -> str:
         path, _ = QFileDialog.getSaveFileName(self.window, title, default_name, file_filter)
         if not path:
@@ -672,6 +791,9 @@ class MainWindowController:
     @staticmethod
     def _inspect_csv(
         path: str,
+        header_row: int | None = None,
+        units_row: int | None = None,
+        data_start_row: int | None = None,
         *,
         cancel_token: object | None = None,
         progress_callback=None,
@@ -679,13 +801,26 @@ class MainWindowController:
         from event_analyzer.data.data_manager import DataManager
 
         manager = DataManager(preview_rows=100)
-        metadata = manager.open_csv(path, cancel_token=cancel_token, progress_callback=progress_callback)
+        metadata = manager.open_csv(
+            path,
+            header_row=header_row,
+            units_row=units_row,
+            data_start_row=data_start_row,
+            cancel_token=cancel_token,
+            progress_callback=progress_callback,
+        )
         return {
             "path": str(metadata.path),
             "columns": metadata.column_names,
             "numeric_columns": metadata.numeric_columns,
             "likely_time_columns": metadata.likely_time_columns,
             "row_count": None,
+            "layout": {
+                "header_row": metadata.layout.header_row,
+                "units_row": metadata.layout.units_row,
+                "data_start_row": metadata.layout.data_start_row,
+            },
+            "units": metadata.units,
             "preview": {
                 "headers": metadata.preview.headers,
                 "rows": metadata.preview.rows,
@@ -698,6 +833,9 @@ class MainWindowController:
         time_column: str,
         target_columns: list[str],
         auxiliary_columns: list[str],
+        header_row: int,
+        units_row: int,
+        data_start_row: int,
         *,
         cancel_token: object | None = None,
         progress_callback=None,
@@ -705,7 +843,14 @@ class MainWindowController:
         from event_analyzer.data.data_manager import DataManager
 
         manager = DataManager(preview_rows=100)
-        manager.open_csv(path, cancel_token=cancel_token, progress_callback=progress_callback)
+        manager.open_csv(
+            path,
+            header_row=header_row,
+            units_row=units_row,
+            data_start_row=data_start_row,
+            cancel_token=cancel_token,
+            progress_callback=progress_callback,
+        )
         return manager.select_columns(
             time_column=time_column,
             target_columns=target_columns,
@@ -714,3 +859,35 @@ class MainWindowController:
             cancel_token=cancel_token,
             progress_callback=progress_callback,
         )
+
+
+def _label_with_unit(label: str, unit: str) -> str:
+    unit = str(unit or "").strip()
+    return f"{label} ({unit})" if unit else label
+
+
+def _target_axis_label(target_names: list[str], units: dict[str, str]) -> str:
+    unique_units = {str(units.get(name, "")).strip() for name in target_names if str(units.get(name, "")).strip()}
+    if len(unique_units) == 1:
+        return _label_with_unit("Target", next(iter(unique_units)))
+    return "Target value"
+
+
+def _auxiliary_axis_labels(
+    auxiliary_names: list[str],
+    assignments: dict[str, str],
+    units: dict[str, str],
+) -> dict[str, str]:
+    by_axis: dict[str, list[str]] = {}
+    for name in auxiliary_names:
+        by_axis.setdefault(assignments.get(name, "y2"), []).append(name)
+    labels: dict[str, str] = {}
+    for axis_id, names in by_axis.items():
+        unique_units = {str(units.get(name, "")).strip() for name in names if str(units.get(name, "")).strip()}
+        if len(names) == 1:
+            labels[axis_id] = _label_with_unit(names[0], next(iter(unique_units), ""))
+        elif len(unique_units) == 1:
+            labels[axis_id] = _label_with_unit(axis_id, next(iter(unique_units)))
+        else:
+            labels[axis_id] = axis_id
+    return labels

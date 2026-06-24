@@ -12,6 +12,12 @@ class SessionState:
     target_columns: list[str] = field(default_factory=list)
     auxiliary_columns: list[str] = field(default_factory=list)
     auxiliary_axes: dict[str, str] = field(default_factory=dict)
+    header_row: int = 1
+    units_row: int | None = None
+    data_start_row: int = 2
+    plot_title: str = "Time-series plot"
+    x_axis_title: str = ""
+    y_axis_title: str = ""
     dividers: list[dict[str, object]] = field(default_factory=list)
     threshold: float | None = None
     region: tuple[float, float] | None = None

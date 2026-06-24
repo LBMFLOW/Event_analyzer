@@ -7,6 +7,7 @@ dependencies already installed.
 
 __all__ = [
     "CSVMetadata",
+    "CSVLayout",
     "CSVPreview",
     "ColumnProfile",
     "DataManager",

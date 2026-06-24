@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import csv
+import importlib.util
+from pathlib import Path
+import tempfile
+import unittest
+
+POLARS_AVAILABLE = importlib.util.find_spec("polars") is not None
+
+if POLARS_AVAILABLE:
+    from event_analyzer.data.data_manager import (
+        DataManager,
+        EmptyDataError,
+        InvalidTimeColumnError,
+        MissingFileError,
+        NonNumericColumnError,
+        TooManyInvalidValuesError,
+    )
+    from scripts.generate_sample_csv import generate
+
+
+@unittest.skipUnless(POLARS_AVAILABLE, "polars is required for DataManager tests")
+class DataManagerTests(unittest.TestCase):
+    def test_open_csv_infers_columns_and_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "sample.csv"
+            generate(path, rows=50, seed=1)
+
+            manager = DataManager(preview_rows=10)
+            metadata = manager.open_csv(path)
+
+            self.assertIn("time_s", metadata.column_names)
+            self.assertIn("case_alpha", metadata.numeric_columns)
+            self.assertIn("timestamp", metadata.likely_time_columns)
+            self.assertEqual(len(manager.preview(5).rows), 5)
+
+    def test_select_columns_with_numeric_time(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "sample.csv"
+            generate(path, rows=25, seed=2)
+
+            manager = DataManager(preview_rows=10)
+            manager.open_csv(path)
+            loaded = manager.select_columns(
+                time_column="time_s",
+                target_columns=["case_alpha", "case_beta"],
+                auxiliary_columns=["aux_temperature"],
+            )
+
+            self.assertFalse(loaded.time_is_datetime)
+            self.assertEqual(loaded.row_count, 25)
+            self.assertEqual(set(loaded.targets), {"case_alpha", "case_beta"})
+            self.assertEqual(set(loaded.auxiliaries), {"aux_temperature"})
+
+    def test_select_columns_with_datetime_time(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "sample.csv"
+            generate(path, rows=20, seed=3)
+
+            manager = DataManager(preview_rows=10)
+            manager.open_csv(path)
+            loaded = manager.select_columns(time_column="timestamp", target_columns=["case_alpha"])
+
+            self.assertTrue(loaded.time_is_datetime)
+            self.assertEqual(loaded.row_count, 20)
+
+    def test_missing_file_has_clear_error(self) -> None:
+        manager = DataManager()
+        with self.assertRaises(MissingFileError):
+            manager.open_csv("does-not-exist.csv")
+
+    def test_non_numeric_target_has_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "sample.csv"
+            generate(path, rows=20, seed=4)
+
+            manager = DataManager(preview_rows=20)
+            manager.open_csv(path)
+
+            with self.assertRaises(NonNumericColumnError):
+                manager.select_columns(time_column="time_s", target_columns=["operator_note"])
+
+    def test_invalid_time_column_has_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "sample.csv"
+            generate(path, rows=20, seed=5)
+
+            manager = DataManager(preview_rows=20)
+            manager.open_csv(path)
+
+            with self.assertRaises(InvalidTimeColumnError):
+                manager.select_columns(time_column="operator_note", target_columns=["case_alpha"])
+
+    def test_empty_data_has_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "empty.csv"
+            path.write_text("time_s,case_alpha\n", encoding="utf-8")
+
+            manager = DataManager()
+            manager.open_csv(path)
+
+            with self.assertRaises(EmptyDataError):
+                manager.select_columns(time_column="time_s", target_columns=["case_alpha"])
+
+    def test_too_many_invalid_values_has_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "invalid_values.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["time_s", "mostly_missing"])
+                for index in range(10):
+                    writer.writerow([index, index if index < 2 else ""])
+
+            manager = DataManager(preview_rows=10, min_numeric_valid_ratio=0.8)
+            manager.open_csv(path)
+
+            with self.assertRaises(TooManyInvalidValuesError):
+                manager.select_columns(time_column="time_s", target_columns=["mostly_missing"])
+
+
+if __name__ == "__main__":
+    unittest.main()
+

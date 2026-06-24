@@ -1,0 +1,929 @@
+from __future__ import annotations
+
+from collections.abc import Callable
+import csv
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Mapping, Sequence
+
+import numpy as np
+
+try:
+    import polars as pl
+except Exception:  # pragma: no cover - depends on optional runtime installation.
+    pl = None
+
+
+NUMERIC_DTYPE_MARKERS = ("Int", "UInt", "Float", "Decimal")
+TIME_NAME_MARKERS = ("time", "date", "timestamp", "datetime", "seconds", "secs", "sec")
+
+
+class DataManagerError(Exception):
+    """Base class for data-loading errors that can be shown directly to users."""
+
+
+class MissingFileError(FileNotFoundError, DataManagerError):
+    """Raised when the requested CSV path does not exist."""
+
+
+class UnreadableCSVError(DataManagerError):
+    """Raised when a CSV cannot be parsed or inspected."""
+
+
+class NonNumericColumnError(DataManagerError):
+    """Raised when a selected target or auxiliary column is not numeric."""
+
+
+class InvalidTimeColumnError(DataManagerError):
+    """Raised when the selected time column is neither numeric nor datetime-like."""
+
+
+class EmptyDataError(DataManagerError):
+    """Raised when no usable rows remain after loading and validation."""
+
+
+class TooManyInvalidValuesError(DataManagerError):
+    """Raised when a selected numeric column has too many missing/invalid values."""
+
+
+class MemoryLimitError(DataManagerError):
+    """Raised when a requested CSV load exceeds the configured cell budget."""
+
+
+@dataclass(slots=True)
+class ColumnProfile:
+    """Summary of one CSV column based on schema and preview values."""
+
+    name: str
+    dtype: str
+    is_numeric: bool
+    numeric_valid_ratio: float
+    is_likely_time: bool = False
+    datetime_valid_ratio: float = 0.0
+    null_count_in_preview: int = 0
+
+
+@dataclass(slots=True)
+class CSVPreview:
+    """Small row preview for display or tests."""
+
+    headers: list[str]
+    rows: list[dict[str, object]]
+
+
+@dataclass(slots=True)
+class CSVMetadata:
+    """Metadata available after opening a CSV file."""
+
+    path: Path
+    columns: list[ColumnProfile]
+    preview: CSVPreview
+
+    @property
+    def column_names(self) -> list[str]:
+        """Return CSV columns in file order."""
+        return [column.name for column in self.columns]
+
+    @property
+    def numeric_columns(self) -> list[str]:
+        """Return columns that appear numeric enough for plotting."""
+        return [column.name for column in self.columns if column.is_numeric]
+
+    @property
+    def likely_time_columns(self) -> list[str]:
+        """Return columns that look like numeric or datetime time axes."""
+        return [column.name for column in self.columns if column.is_likely_time]
+
+
+@dataclass(slots=True)
+class LoadedSeries:
+    """One selected target or auxiliary series prepared for plotting."""
+
+    name: str
+    values: np.ndarray
+    invalid_ratio: float
+
+
+@dataclass(slots=True)
+class LoadedData:
+    """Selected CSV data converted to sorted NumPy arrays."""
+
+    path: Path
+    time_column: str
+    time_values: np.ndarray
+    time_is_datetime: bool
+    targets: dict[str, np.ndarray]
+    auxiliaries: dict[str, np.ndarray] = field(default_factory=dict)
+    warnings: list[str] = field(default_factory=list)
+
+    @property
+    def row_count(self) -> int:
+        """Number of rows with valid time values."""
+        return int(self.time_values.size)
+
+    @property
+    def time_range(self) -> tuple[float, float]:
+        """Minimum and maximum plotting time values."""
+        if self.time_values.size == 0:
+            raise EmptyDataError("No loaded time values are available.")
+        return float(self.time_values[0]), float(self.time_values[-1])
+
+
+class DataManager:
+    """Load and validate large CSV time-series files for plotting and analysis.
+
+    Polars is used because it can inspect schemas and lazily scan CSV files
+    without loading unused columns. Once the user chooses the time, target, and
+    auxiliary columns, only those selected columns are collected and converted to
+    NumPy arrays. Missing numeric values are represented as ``np.nan`` so plots
+    can show gaps and analysis code can use finite-value masks.
+    """
+
+    def __init__(
+        self,
+        *,
+        preview_rows: int = 100,
+        infer_schema_length: int = 10_000,
+        min_numeric_valid_ratio: float = 0.9,
+        min_time_valid_ratio: float = 0.9,
+        max_loaded_cells: int | None = None,
+    ) -> None:
+        self.preview_rows = preview_rows
+        self.infer_schema_length = infer_schema_length
+        self.min_numeric_valid_ratio = min_numeric_valid_ratio
+        self.min_time_valid_ratio = min_time_valid_ratio
+        self.max_loaded_cells = max_loaded_cells
+        self._metadata: CSVMetadata | None = None
+
+    @property
+    def metadata(self) -> CSVMetadata:
+        """Metadata for the currently opened CSV file."""
+        if self._metadata is None:
+            raise DataManagerError("No CSV file is open. Open a CSV before reading metadata.")
+        return self._metadata
+
+    @property
+    def column_names(self) -> list[str]:
+        """Column names for the currently opened CSV."""
+        return self.metadata.column_names
+
+    @property
+    def numeric_columns(self) -> list[str]:
+        """Columns inferred as numeric for the currently opened CSV."""
+        return self.metadata.numeric_columns
+
+    @property
+    def likely_time_columns(self) -> list[str]:
+        """Columns inferred as likely time axes for the currently opened CSV."""
+        return self.metadata.likely_time_columns
+
+    def open_csv(
+        self,
+        path: str | Path,
+        *,
+        cancel_token: object | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> CSVMetadata:
+        """Open a CSV path, inspect columns, and cache metadata.
+
+        Args:
+            path: CSV file path.
+
+        Raises:
+            MissingFileError: The file does not exist.
+            UnreadableCSVError: The file cannot be read as CSV.
+            EmptyDataError: The file has no columns.
+        """
+        _report(progress_callback, 0, 4, "Checking CSV path")
+        _raise_if_cancelled(cancel_token)
+        csv_path = Path(path)
+        if not csv_path.exists():
+            raise MissingFileError(f"CSV file does not exist: {csv_path}")
+        if not csv_path.is_file():
+            raise MissingFileError(f"CSV path is not a file: {csv_path}")
+
+        if pl is None:
+            return self._open_csv_stdlib(csv_path, cancel_token=cancel_token, progress_callback=progress_callback)
+
+        try:
+            _report(progress_callback, 1, 4, "Reading preview rows")
+            preview_frame = pl.read_csv(
+                csv_path,
+                n_rows=self.preview_rows,
+                infer_schema_length=min(self.preview_rows, self.infer_schema_length),
+                ignore_errors=False,
+            )
+        except Exception as exc:
+            raise UnreadableCSVError(f"Could not read CSV file '{csv_path}': {exc}") from exc
+
+        if not preview_frame.columns:
+            raise EmptyDataError(f"CSV file '{csv_path}' does not contain any columns.")
+
+        _raise_if_cancelled(cancel_token)
+        _report(progress_callback, 2, 4, "Inspecting CSV schema")
+        schema = self._read_schema(csv_path, preview_frame)
+        _raise_if_cancelled(cancel_token)
+        _report(progress_callback, 3, 4, "Profiling columns")
+        profiles = [
+            self._profile_column(name, dtype, preview_frame[name] if name in preview_frame.columns else None)
+            for name, dtype in schema.items()
+        ]
+        likely_time = set(self._infer_likely_time_column_names(profiles))
+        for profile in profiles:
+            profile.is_likely_time = profile.name in likely_time
+
+        metadata = CSVMetadata(
+            path=csv_path,
+            columns=profiles,
+            preview=self._frame_to_preview(preview_frame),
+        )
+        self._metadata = metadata
+        _report(progress_callback, 4, 4, "CSV preview ready")
+        return metadata
+
+    def preview(self, rows: int | None = None) -> CSVPreview:
+        """Return a preview of the first ``rows`` rows from the opened CSV."""
+        metadata = self.metadata
+        if rows is None or rows <= self.preview_rows:
+            return CSVPreview(headers=metadata.preview.headers, rows=metadata.preview.rows[: rows or self.preview_rows])
+
+        try:
+            if pl is None:
+                headers, rows = _read_csv_preview(metadata.path, rows=rows)
+                return CSVPreview(headers=headers, rows=rows)
+            frame = pl.read_csv(
+                metadata.path,
+                n_rows=rows,
+                infer_schema_length=min(rows, self.infer_schema_length),
+                ignore_errors=False,
+            )
+        except Exception as exc:
+            raise UnreadableCSVError(f"Could not read preview rows from '{metadata.path}': {exc}") from exc
+        return self._frame_to_preview(frame)
+
+    def infer_numeric_columns(self) -> list[str]:
+        """Return columns inferred as numeric from schema and preview values."""
+        return self.numeric_columns
+
+    def infer_likely_time_columns(self) -> list[str]:
+        """Return columns that look suitable for the time axis."""
+        return self.likely_time_columns
+
+    def select_columns(
+        self,
+        *,
+        time_column: str,
+        target_columns: Sequence[str],
+        auxiliary_columns: Sequence[str] | None = None,
+        cancel_token: object | None = None,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> LoadedData:
+        """Load selected columns and convert them into sorted plotting arrays.
+
+        Args:
+            time_column: Numeric or datetime-like column to use as x-axis.
+            target_columns: One or more numeric case/target columns.
+            auxiliary_columns: Optional numeric auxiliary columns.
+
+        Raises:
+            DataManagerError: No CSV is open or requested columns are missing.
+            NonNumericColumnError: A selected target/auxiliary column is not numeric.
+            InvalidTimeColumnError: The time column is not valid numeric/datetime data.
+            EmptyDataError: No usable rows remain after invalid time rows are removed.
+            TooManyInvalidValuesError: A selected numeric column exceeds the invalid limit.
+        """
+        metadata = self.metadata
+        if pl is None:
+            return self._select_columns_stdlib(
+                time_column=time_column,
+                target_columns=target_columns,
+                auxiliary_columns=auxiliary_columns,
+                cancel_token=cancel_token,
+                progress_callback=progress_callback,
+            )
+
+        targets = list(target_columns)
+        auxiliaries = list(auxiliary_columns or [])
+        total_series = len(targets) + len(auxiliaries)
+        total_steps = 4 + total_series
+        _report(progress_callback, 0, total_steps, "Validating selected columns")
+        _raise_if_cancelled(cancel_token)
+        if not targets:
+            raise DataManagerError("Select at least one target column.")
+
+        selected_columns = _unique_preserving_order([time_column, *targets, *auxiliaries])
+        self._validate_columns_exist(selected_columns)
+        self._validate_selected_numeric(targets, role="target")
+        self._validate_selected_numeric(auxiliaries, role="auxiliary")
+
+        try:
+            _report(progress_callback, 1, total_steps, "Loading selected CSV columns")
+            frame = self._collect_selected(metadata.path, selected_columns)
+        except DataManagerError:
+            raise
+        except Exception as exc:
+            raise UnreadableCSVError(f"Could not load selected CSV columns: {exc}") from exc
+
+        self._validate_loaded_cell_budget(frame.height, len(selected_columns))
+        if frame.height == 0:
+            raise EmptyDataError("CSV file contains no data rows.")
+
+        _raise_if_cancelled(cancel_token)
+        _report(progress_callback, 2, total_steps, "Converting time column")
+        time_values, time_is_datetime, warnings = self._coerce_time_column(time_column, frame[time_column])
+        valid_time_mask = np.isfinite(time_values)
+        if not valid_time_mask.any():
+            raise EmptyDataError(f"No usable rows remain after validating time column '{time_column}'.")
+
+        order = np.argsort(time_values[valid_time_mask], kind="mergesort")
+        sorted_time = time_values[valid_time_mask][order]
+
+        loaded_targets: dict[str, np.ndarray] = {}
+        progress_step = 3
+        for offset, name in enumerate(targets, start=1):
+            _raise_if_cancelled(cancel_token)
+            _report(
+                progress_callback,
+                progress_step,
+                total_steps,
+                f"Converting target {offset:,}/{total_series:,}: {name}",
+            )
+            loaded_targets[name] = self._coerce_numeric_series(
+                frame[name],
+                name,
+                valid_time_mask,
+                order,
+                warnings,
+                role="target",
+            )
+            progress_step += 1
+
+        loaded_auxiliaries: dict[str, np.ndarray] = {}
+        for offset, name in enumerate(auxiliaries, start=len(targets) + 1):
+            _raise_if_cancelled(cancel_token)
+            _report(
+                progress_callback,
+                progress_step,
+                total_steps,
+                f"Converting auxiliary {offset:,}/{total_series:,}: {name}",
+            )
+            loaded_auxiliaries[name] = self._coerce_numeric_series(
+                frame[name],
+                name,
+                valid_time_mask,
+                order,
+                warnings,
+                role="auxiliary",
+            )
+            progress_step += 1
+
+        _report(progress_callback, total_steps, total_steps, "Selected data ready")
+        return LoadedData(
+            path=metadata.path,
+            time_column=time_column,
+            time_values=sorted_time,
+            time_is_datetime=time_is_datetime,
+            targets=loaded_targets,
+            auxiliaries=loaded_auxiliaries,
+            warnings=warnings,
+        )
+
+    load_selected = select_columns
+
+    def _open_csv_stdlib(
+        self,
+        csv_path: Path,
+        *,
+        cancel_token: object | None,
+        progress_callback: Callable[[int, int, str], None] | None,
+    ) -> CSVMetadata:
+        _report(progress_callback, 1, 4, "Reading preview rows")
+        headers, preview_rows = _read_csv_preview(csv_path, rows=self.preview_rows)
+        if not headers:
+            raise EmptyDataError(f"CSV file '{csv_path}' does not contain any columns.")
+
+        _raise_if_cancelled(cancel_token)
+        _report(progress_callback, 3, 4, "Profiling columns")
+        column_values = {header: [row.get(header) for row in preview_rows] for header in headers}
+        profiles = [self._profile_column_values(name, column_values[name]) for name in headers]
+        likely_time = set(self._infer_likely_time_column_names(profiles))
+        for profile in profiles:
+            profile.is_likely_time = profile.name in likely_time
+
+        metadata = CSVMetadata(
+            path=csv_path,
+            columns=profiles,
+            preview=CSVPreview(headers=headers, rows=preview_rows),
+        )
+        self._metadata = metadata
+        _report(progress_callback, 4, 4, "CSV preview ready")
+        return metadata
+
+    def _select_columns_stdlib(
+        self,
+        *,
+        time_column: str,
+        target_columns: Sequence[str],
+        auxiliary_columns: Sequence[str] | None,
+        cancel_token: object | None,
+        progress_callback: Callable[[int, int, str], None] | None,
+    ) -> LoadedData:
+        metadata = self.metadata
+        targets = list(target_columns)
+        auxiliaries = list(auxiliary_columns or [])
+        total_series = len(targets) + len(auxiliaries)
+        total_steps = 4 + total_series
+        _report(progress_callback, 0, total_steps, "Validating selected columns")
+        _raise_if_cancelled(cancel_token)
+        if not targets:
+            raise DataManagerError("Select at least one target column.")
+
+        selected_columns = _unique_preserving_order([time_column, *targets, *auxiliaries])
+        self._validate_columns_exist(selected_columns)
+        self._validate_selected_numeric(targets, role="target")
+        self._validate_selected_numeric(auxiliaries, role="auxiliary")
+
+        _report(progress_callback, 1, total_steps, "Loading selected CSV columns")
+        rows = _read_selected_csv_rows(metadata.path, selected_columns)
+        self._validate_loaded_cell_budget(len(rows), len(selected_columns))
+        if not rows:
+            raise EmptyDataError("CSV file contains no data rows.")
+
+        columns = {name: [row.get(name) for row in rows] for name in selected_columns}
+        _raise_if_cancelled(cancel_token)
+        _report(progress_callback, 2, total_steps, "Converting time column")
+        time_values, time_is_datetime, warnings = self._coerce_time_values(time_column, columns[time_column])
+        valid_time_mask = np.isfinite(time_values)
+        if not valid_time_mask.any():
+            raise EmptyDataError(f"No usable rows remain after validating time column '{time_column}'.")
+
+        order = np.argsort(time_values[valid_time_mask], kind="mergesort")
+        sorted_time = time_values[valid_time_mask][order]
+        loaded_targets: dict[str, np.ndarray] = {}
+        progress_step = 3
+        for offset, name in enumerate(targets, start=1):
+            _raise_if_cancelled(cancel_token)
+            _report(progress_callback, progress_step, total_steps, f"Converting target {offset:,}/{total_series:,}: {name}")
+            loaded_targets[name] = self._coerce_numeric_values(
+                columns[name],
+                name,
+                valid_time_mask,
+                order,
+                warnings,
+                role="target",
+            )
+            progress_step += 1
+
+        loaded_auxiliaries: dict[str, np.ndarray] = {}
+        for offset, name in enumerate(auxiliaries, start=len(targets) + 1):
+            _raise_if_cancelled(cancel_token)
+            _report(
+                progress_callback,
+                progress_step,
+                total_steps,
+                f"Converting auxiliary {offset:,}/{total_series:,}: {name}",
+            )
+            loaded_auxiliaries[name] = self._coerce_numeric_values(
+                columns[name],
+                name,
+                valid_time_mask,
+                order,
+                warnings,
+                role="auxiliary",
+            )
+            progress_step += 1
+
+        _report(progress_callback, total_steps, total_steps, "Selected data ready")
+        return LoadedData(
+            path=metadata.path,
+            time_column=time_column,
+            time_values=sorted_time,
+            time_is_datetime=time_is_datetime,
+            targets=loaded_targets,
+            auxiliaries=loaded_auxiliaries,
+            warnings=warnings,
+        )
+
+    def _read_schema(self, csv_path: Path, preview_frame: pl.DataFrame) -> Mapping[str, pl.DataType]:
+        try:
+            return dict(
+                pl.scan_csv(
+                    csv_path,
+                    infer_schema_length=self.infer_schema_length,
+                    ignore_errors=False,
+                ).collect_schema()
+            )
+        except Exception:
+            return dict(zip(preview_frame.columns, preview_frame.dtypes))
+
+    def _profile_column(self, name: str, dtype: pl.DataType, sample: pl.Series | None) -> ColumnProfile:
+        dtype_text = str(dtype)
+        dtype_is_numeric = _is_numeric_dtype(dtype_text)
+        numeric_ratio = 1.0 if dtype_is_numeric else 0.0
+        datetime_ratio = 0.0
+        null_count = 0
+
+        if sample is not None and sample.len() > 0:
+            null_count = int(sample.null_count())
+            numeric_ratio = self._numeric_ratio(sample)
+            datetime_ratio = self._datetime_ratio(sample)
+
+        is_numeric = dtype_is_numeric or numeric_ratio >= self.min_numeric_valid_ratio
+        return ColumnProfile(
+            name=name,
+            dtype=dtype_text,
+            is_numeric=is_numeric,
+            numeric_valid_ratio=numeric_ratio,
+            datetime_valid_ratio=datetime_ratio,
+            null_count_in_preview=null_count,
+        )
+
+    def _profile_column_values(self, name: str, values: Sequence[object]) -> ColumnProfile:
+        numeric = _values_to_float(values)
+        numeric_ratio = _finite_ratio(numeric)
+        datetime_ratio = _datetime_finite_ratio(_values_to_datetime64(values))
+        is_numeric = numeric_ratio >= self.min_numeric_valid_ratio
+        dtype = "Float64" if is_numeric else "Utf8"
+        return ColumnProfile(
+            name=name,
+            dtype=dtype,
+            is_numeric=is_numeric,
+            numeric_valid_ratio=numeric_ratio,
+            datetime_valid_ratio=datetime_ratio,
+            null_count_in_preview=sum(1 for value in values if value in (None, "")),
+        )
+
+    def _infer_likely_time_column_names(self, profiles: Sequence[ColumnProfile]) -> list[str]:
+        named_time = [
+            profile.name
+            for profile in profiles
+            if _looks_like_time_name(profile.name)
+            and (profile.is_numeric or profile.datetime_valid_ratio >= self.min_time_valid_ratio)
+        ]
+        if named_time:
+            return named_time
+
+        datetime_like = [
+            profile.name
+            for profile in profiles
+            if profile.datetime_valid_ratio >= self.min_time_valid_ratio
+        ]
+        if datetime_like:
+            return datetime_like
+
+        numeric = [profile.name for profile in profiles if profile.is_numeric]
+        return numeric[:1]
+
+    def _validate_columns_exist(self, columns: Sequence[str]) -> None:
+        available = set(self.column_names)
+        missing = [column for column in columns if column not in available]
+        if missing:
+            raise DataManagerError(f"CSV file does not contain column(s): {', '.join(missing)}")
+
+    def _validate_selected_numeric(self, columns: Sequence[str], *, role: str) -> None:
+        profiles = {profile.name: profile for profile in self.metadata.columns}
+        for column in columns:
+            profile = profiles[column]
+            if not profile.is_numeric:
+                raise NonNumericColumnError(
+                    f"Selected {role} column '{column}' is not numeric enough for plotting "
+                    f"({profile.numeric_valid_ratio:.1%} numeric values in preview; "
+                    f"required at least {self.min_numeric_valid_ratio:.0%})."
+                )
+
+    def _collect_selected(self, csv_path: Path, selected_columns: Sequence[str]) -> pl.DataFrame:
+        self._validate_requested_cell_budget(csv_path, selected_columns)
+        lazy_frame = pl.scan_csv(
+            csv_path,
+            infer_schema_length=self.infer_schema_length,
+            ignore_errors=True,
+        ).select(list(selected_columns))
+        try:
+            return lazy_frame.collect(engine="streaming")
+        except TypeError:
+            return lazy_frame.collect(streaming=True)
+
+    def _validate_requested_cell_budget(self, csv_path: Path, selected_columns: Sequence[str]) -> None:
+        if self.max_loaded_cells is None:
+            return
+        try:
+            row_count_frame = (
+                pl.scan_csv(
+                    csv_path,
+                    infer_schema_length=self.infer_schema_length,
+                    ignore_errors=True,
+                )
+                .select(pl.len())
+                .collect()
+            )
+            row_count = int(row_count_frame.item())
+        except Exception:
+            return
+        requested_cells = row_count * len(selected_columns)
+        if requested_cells > self.max_loaded_cells:
+            raise MemoryLimitError(
+                f"Selected data would load about {requested_cells:,} cells "
+                f"({row_count:,} rows x {len(selected_columns):,} columns), "
+                f"which exceeds the configured limit of {self.max_loaded_cells:,} cells. "
+                "Select fewer columns or raise the memory limit."
+            )
+
+    def _validate_loaded_cell_budget(self, row_count: int, column_count: int) -> None:
+        if self.max_loaded_cells is None:
+            return
+        loaded_cells = row_count * column_count
+        if loaded_cells > self.max_loaded_cells:
+            raise MemoryLimitError(
+                f"Loaded data has {loaded_cells:,} cells, exceeding the configured limit of "
+                f"{self.max_loaded_cells:,} cells. Select fewer columns or raise the memory limit."
+            )
+
+    def _coerce_time_column(self, name: str, series: pl.Series) -> tuple[np.ndarray, bool, list[str]]:
+        warnings: list[str] = []
+
+        numeric = _series_to_float(series)
+        numeric_ratio = _finite_ratio(numeric)
+        if numeric_ratio >= self.min_time_valid_ratio:
+            if numeric_ratio < 1.0:
+                warnings.append(
+                    f"Time column '{name}' has {(1.0 - numeric_ratio):.1%} missing or invalid values; "
+                    "those rows were ignored."
+                )
+            return numeric, False, warnings
+
+        datetime_values = _series_to_datetime64(series)
+        datetime_ratio = _datetime_finite_ratio(datetime_values)
+        if datetime_ratio >= self.min_time_valid_ratio:
+            invalid = np.isnat(datetime_values)
+            seconds = datetime_values.astype("datetime64[ns]").astype("int64").astype(float) / 1_000_000_000.0
+            seconds[invalid] = np.nan
+            if datetime_ratio < 1.0:
+                warnings.append(
+                    f"Time column '{name}' has {(1.0 - datetime_ratio):.1%} unparseable datetime values; "
+                    "those rows were ignored."
+                )
+            return seconds, True, warnings
+
+        raise InvalidTimeColumnError(
+            f"Selected time column '{name}' is invalid. It must be numeric or datetime-like, "
+            f"with at least {self.min_time_valid_ratio:.0%} valid values."
+        )
+
+    def _coerce_time_values(self, name: str, values: Sequence[object]) -> tuple[np.ndarray, bool, list[str]]:
+        warnings: list[str] = []
+        numeric = _values_to_float(values)
+        numeric_ratio = _finite_ratio(numeric)
+        if numeric_ratio >= self.min_time_valid_ratio:
+            if numeric_ratio < 1.0:
+                warnings.append(
+                    f"Time column '{name}' has {(1.0 - numeric_ratio):.1%} missing or invalid values; "
+                    "those rows were ignored."
+                )
+            return numeric, False, warnings
+
+        datetime_values = _values_to_datetime64(values)
+        datetime_ratio = _datetime_finite_ratio(datetime_values)
+        if datetime_ratio >= self.min_time_valid_ratio:
+            invalid = np.isnat(datetime_values)
+            seconds = datetime_values.astype("datetime64[ns]").astype("int64").astype(float) / 1_000_000_000.0
+            seconds[invalid] = np.nan
+            if datetime_ratio < 1.0:
+                warnings.append(
+                    f"Time column '{name}' has {(1.0 - datetime_ratio):.1%} unparseable datetime values; "
+                    "those rows were ignored."
+                )
+            return seconds, True, warnings
+
+        raise InvalidTimeColumnError(
+            f"Selected time column '{name}' is invalid. It must be numeric or datetime-like, "
+            f"with at least {self.min_time_valid_ratio:.0%} valid values."
+        )
+
+    def _coerce_numeric_series(
+        self,
+        series: pl.Series,
+        name: str,
+        valid_time_mask: np.ndarray,
+        order: np.ndarray,
+        warnings: list[str],
+        *,
+        role: str,
+    ) -> np.ndarray:
+        values = _series_to_float(series)
+        values_with_valid_time = values[valid_time_mask]
+        valid_ratio = _finite_ratio(values_with_valid_time)
+        invalid_ratio = 1.0 - valid_ratio
+
+        if valid_ratio < self.min_numeric_valid_ratio:
+            raise TooManyInvalidValuesError(
+                f"Selected {role} column '{name}' has {invalid_ratio:.1%} missing or invalid values "
+                f"after time filtering; allowed maximum is {(1.0 - self.min_numeric_valid_ratio):.0%}."
+            )
+
+        if invalid_ratio > 0:
+            warnings.append(
+                f"Column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
+                "they are represented as NaN gaps."
+            )
+
+        return values_with_valid_time[order]
+
+    def _coerce_numeric_values(
+        self,
+        values: Sequence[object],
+        name: str,
+        valid_time_mask: np.ndarray,
+        order: np.ndarray,
+        warnings: list[str],
+        *,
+        role: str,
+    ) -> np.ndarray:
+        numeric = _values_to_float(values)
+        values_with_valid_time = numeric[valid_time_mask]
+        valid_ratio = _finite_ratio(values_with_valid_time)
+        invalid_ratio = 1.0 - valid_ratio
+
+        if valid_ratio < self.min_numeric_valid_ratio:
+            raise TooManyInvalidValuesError(
+                f"Selected {role} column '{name}' has {invalid_ratio:.1%} missing or invalid values "
+                f"after time filtering; allowed maximum is {(1.0 - self.min_numeric_valid_ratio):.0%}."
+            )
+
+        if invalid_ratio > 0:
+            warnings.append(
+                f"Column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
+                "they are represented as NaN gaps."
+            )
+        return values_with_valid_time[order]
+
+    def _numeric_ratio(self, series: pl.Series) -> float:
+        values = _series_to_float(series)
+        return _finite_ratio(values)
+
+    def _datetime_ratio(self, series: pl.Series) -> float:
+        return _datetime_finite_ratio(_series_to_datetime64(series))
+
+    def _frame_to_preview(self, frame: pl.DataFrame) -> CSVPreview:
+        rows: list[dict[str, object]] = []
+        for row in frame.iter_rows(named=True):
+            rows.append(dict(row))
+        return CSVPreview(headers=list(frame.columns), rows=rows)
+
+
+def _series_to_float(series: pl.Series) -> np.ndarray:
+    try:
+        return series.cast(pl.Float64, strict=False).to_numpy().astype(float, copy=False)
+    except Exception:
+        values = series.to_list()
+        output = np.full(len(values), np.nan, dtype=float)
+        for index, value in enumerate(values):
+            try:
+                output[index] = float(value)
+            except (TypeError, ValueError):
+                output[index] = np.nan
+        return output
+
+
+def _series_to_datetime64(series: pl.Series) -> np.ndarray:
+    if "Datetime" in str(series.dtype) or "Date" in str(series.dtype):
+        values = series.to_numpy()
+        if np.issubdtype(values.dtype, np.datetime64):
+            return values.astype("datetime64[ns]")
+
+    try:
+        parsed = series.cast(pl.Utf8).str.to_datetime(strict=False, exact=False)
+        values = parsed.to_numpy()
+        if np.issubdtype(values.dtype, np.datetime64):
+            return values.astype("datetime64[ns]")
+    except Exception:
+        pass
+
+    parsed_values: list[np.datetime64] = []
+    for value in series.to_list():
+        parsed = _parse_datetime_value(value)
+        if parsed is None:
+            parsed_values.append(np.datetime64("NaT", "ns"))
+        else:
+            parsed_values.append(np.datetime64(parsed.replace(tzinfo=None), "ns"))
+    return np.asarray(parsed_values, dtype="datetime64[ns]")
+
+
+def _values_to_float(values: Sequence[object]) -> np.ndarray:
+    output = np.full(len(values), np.nan, dtype=float)
+    for index, value in enumerate(values):
+        if value is None or value == "":
+            continue
+        try:
+            output[index] = float(value)
+        except (TypeError, ValueError):
+            output[index] = np.nan
+    return output
+
+
+def _values_to_datetime64(values: Sequence[object]) -> np.ndarray:
+    parsed_values: list[np.datetime64] = []
+    for value in values:
+        parsed = _parse_datetime_value(value)
+        if parsed is None:
+            parsed_values.append(np.datetime64("NaT", "ns"))
+        else:
+            parsed_values.append(np.datetime64(parsed.replace(tzinfo=None), "ns"))
+    return np.asarray(parsed_values, dtype="datetime64[ns]")
+
+
+def _read_csv_preview(path: Path, *, rows: int) -> tuple[list[str], list[dict[str, object]]]:
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            headers = list(reader.fieldnames or [])
+            preview: list[dict[str, object]] = []
+            for index, row in enumerate(reader):
+                if index >= rows:
+                    break
+                preview.append(dict(row))
+            return headers, preview
+    except Exception as exc:
+        raise UnreadableCSVError(f"Could not read CSV file '{path}': {exc}") from exc
+
+
+def _read_selected_csv_rows(path: Path, selected_columns: Sequence[str]) -> list[dict[str, object]]:
+    try:
+        with path.open(newline="", encoding="utf-8-sig") as handle:
+            reader = csv.DictReader(handle)
+            rows: list[dict[str, object]] = []
+            for row in reader:
+                rows.append({column: row.get(column) for column in selected_columns})
+            return rows
+    except Exception as exc:
+        raise UnreadableCSVError(f"Could not load selected CSV columns: {exc}") from exc
+
+
+def _parse_datetime_value(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc)
+    return parsed
+
+
+def _finite_ratio(values: np.ndarray) -> float:
+    if values.size == 0:
+        return 0.0
+    return float(np.isfinite(values).sum() / values.size)
+
+
+def _datetime_finite_ratio(values: np.ndarray) -> float:
+    if values.size == 0:
+        return 0.0
+    return float((~np.isnat(values)).sum() / values.size)
+
+
+def _is_numeric_dtype(dtype_text: str) -> bool:
+    return any(marker in dtype_text for marker in NUMERIC_DTYPE_MARKERS)
+
+
+def _looks_like_time_name(name: str) -> bool:
+    lowered = name.lower()
+    return any(marker in lowered for marker in TIME_NAME_MARKERS)
+
+
+def _unique_preserving_order(values: Sequence[str]) -> list[str]:
+    seen: set[str] = set()
+    unique: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            unique.append(value)
+    return unique
+
+
+def _report(
+    progress_callback: Callable[[int, int, str], None] | None,
+    current: int,
+    total: int,
+    message: str,
+) -> None:
+    if progress_callback is not None:
+        progress_callback(current, total, message)
+
+
+def _raise_if_cancelled(cancel_token: object | None) -> None:
+    if cancel_token is None:
+        return
+    cancelled = getattr(cancel_token, "is_cancelled", False)
+    if callable(cancelled):
+        cancelled = cancelled()
+    if bool(cancelled):
+        raise DataManagerError("CSV loading was cancelled.")

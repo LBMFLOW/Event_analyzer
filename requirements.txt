@@ -1,0 +1,6 @@
+PyQt6>=6.6
+pyqtgraph>=0.13.7
+polars>=0.20
+numpy>=1.26
+matplotlib>=3.8
+

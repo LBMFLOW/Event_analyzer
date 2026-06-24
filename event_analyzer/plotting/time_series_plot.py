@@ -9,7 +9,7 @@ import numpy as np
 import pyqtgraph as pg
 import pyqtgraph.exporters
 from PyQt6.QtCore import QPoint, QSignalBlocker, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QCursor, QPen
+from PyQt6.QtGui import QAction, QCursor, QFont, QPen
 from PyQt6.QtWidgets import QFileDialog, QLabel, QMenu, QSlider, QVBoxLayout, QWidget
 
 from event_analyzer.data.downsample import min_max_downsample
@@ -216,11 +216,23 @@ class TimeSeriesPlotWidget(QWidget):
             pen=pg.mkPen("#52525b", width=1.4, style=Qt.PenStyle.DashLine),
             hoverPen=pg.mkPen("#111827", width=2),
         )
-        text = pg.TextItem(label or actual_id, color="#111827", anchor=(0, 1))
+        text = pg.TextItem(
+            label or actual_id,
+            color="#111827",
+            anchor=(1, 0),
+            fill=pg.mkBrush("#fef08a"),
+            border=pg.mkPen("#52525b", width=1),
+        )
+        divider_font = QFont()
+        divider_font.setPointSize(13)
+        divider_font.setBold(True)
+        text.setFont(divider_font)
+        text.setZValue(35)
         self.plotItem.addItem(line, ignoreBounds=True)
         self.plotItem.addItem(text, ignoreBounds=True)
         handle = DividerHandle(divider_id=actual_id, line=line, label=text)
         self._dividers[actual_id] = handle
+        line.sigPositionChanged.connect(lambda moved_line, did=actual_id: self._divider_line_position_changed(did, moved_line))
         line.sigPositionChangeFinished.connect(lambda moved_line, did=actual_id: self._divider_line_moved(did, moved_line))
         self._update_divider_label(handle)
         return actual_id
@@ -662,6 +674,11 @@ class TimeSeriesPlotWidget(QWidget):
         self._update_divider_label(handle)
         self.divider_moved.emit(divider_id, float(line.value()))
 
+    def _divider_line_position_changed(self, divider_id: str, _line: pg.InfiniteLine) -> None:
+        handle = self._dividers.get(divider_id)
+        if handle is not None:
+            self._update_divider_label(handle)
+
     def _threshold_line_moved(self, line: pg.InfiniteLine) -> None:
         value = float(line.value())
         self.threshold_moved.emit(value)
@@ -685,8 +702,15 @@ class TimeSeriesPlotWidget(QWidget):
             self._update_divider_label(handle)
 
     def _update_divider_label(self, handle: DividerHandle) -> None:
-        _, y_range = self.view_range()
-        handle.label.setPos(float(handle.line.value()), y_range[1])
+        x_range, y_range = self.view_range()
+        x_span = max(abs(x_range[1] - x_range[0]), 1.0)
+        y_span = max(abs(y_range[1] - y_range[0]), 1.0)
+        # Anchor the label's top-right corner just left of the divider line.
+        # The small data-space inset keeps the label visible after zoom/pan.
+        handle.label.setPos(
+            float(handle.line.value()) - x_span * 0.006,
+            y_range[1] - y_span * 0.03,
+        )
 
     def scene(self):
         return self.plot_widget.scene()

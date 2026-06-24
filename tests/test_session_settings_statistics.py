@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 import unittest
 
 import numpy as np
@@ -18,6 +19,8 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
         for path in Path.cwd().glob("test_session_settings_*"):
             if path.is_file():
                 path.unlink()
+            elif path.is_dir():
+                shutil.rmtree(path)
 
     def test_session_round_trip_includes_advanced_state(self) -> None:
         path = Path.cwd() / "test_session_settings_project.json"
@@ -63,6 +66,30 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
         self.assertEqual(settings.recent_files[0], "file_5.csv")
         self.assertEqual(len(settings.recent_files), 10)
         self.assertEqual(len(set(settings.recent_files)), 10)
+
+    def test_app_settings_remembers_last_csv_directory(self) -> None:
+        directory = Path.cwd() / "test_session_settings_csv_dir"
+        directory.mkdir()
+        csv_path = directory / "sample.csv"
+        csv_path.write_text("time,value\n0,1\n", encoding="utf-8")
+        settings_path = directory / "settings.json"
+        settings = AppSettings()
+
+        settings.add_recent_file(csv_path)
+        settings.save(settings_path)
+        restored = AppSettings.load(settings_path)
+
+        self.assertEqual(restored.last_csv_directory, str(directory))
+        self.assertEqual(restored.open_csv_directory(), str(directory))
+
+    def test_app_settings_loads_legacy_settings_without_last_csv_directory(self) -> None:
+        path = Path.cwd() / "test_session_settings_app_legacy.json"
+        path.write_text(json.dumps({"recent_files": ["sample.csv"], "theme": "dark"}), encoding="utf-8")
+
+        restored = AppSettings.load(path)
+
+        self.assertEqual(restored.theme, "dark")
+        self.assertEqual(restored.last_csv_directory, "")
 
     def test_unit_parsing(self) -> None:
         self.assertEqual(split_column_unit("pressure [Pa]"), ("pressure", "Pa"))

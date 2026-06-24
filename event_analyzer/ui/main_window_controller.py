@@ -106,7 +106,7 @@ class MainWindowController:
         path, _ = QFileDialog.getOpenFileName(
             self.window,
             "Open CSV",
-            "",
+            self.settings.open_csv_directory(),
             "CSV files (*.csv);;All files (*)",
         )
         if path:

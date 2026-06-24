@@ -14,11 +14,27 @@ class AppSettings:
 
     recent_files: list[str] = field(default_factory=list)
     theme: str = "light"
+    last_csv_directory: str = ""
 
     def add_recent_file(self, path: str | Path) -> None:
         resolved = str(Path(path))
         remaining = [item for item in self.recent_files if item != resolved]
         self.recent_files = [resolved, *remaining][:MAX_RECENT_FILES]
+        directory = _csv_parent_directory(resolved)
+        if directory:
+            self.last_csv_directory = directory
+
+    def open_csv_directory(self) -> str:
+        """Return the best available folder to use for the Open CSV dialog."""
+        if self.last_csv_directory:
+            directory = Path(self.last_csv_directory).expanduser()
+            if directory.is_dir():
+                return str(directory)
+        for recent_file in self.recent_files:
+            directory = Path(recent_file).expanduser().parent
+            if directory.is_dir():
+                return str(directory)
+        return ""
 
     def save(self, path: str | Path | None = None) -> None:
         settings_path = Path(path) if path is not None else default_settings_path()
@@ -38,12 +54,24 @@ class AppSettings:
         theme = str(data.get("theme", "light"))
         if theme not in {"light", "dark"}:
             theme = "light"
-        return cls(recent_files=recent[:MAX_RECENT_FILES], theme=theme)
+        last_csv_directory = str(data.get("last_csv_directory", "") or "")
+        return cls(
+            recent_files=recent[:MAX_RECENT_FILES],
+            theme=theme,
+            last_csv_directory=last_csv_directory,
+        )
 
 
 def default_settings_path() -> Path:
     """Return the user preference file path without hardcoding a platform path."""
     return Path.home() / ".event_analyzer" / "settings.json"
+
+
+def _csv_parent_directory(path: str | Path) -> str:
+    parent = Path(path).expanduser().parent
+    if str(parent) in {"", "."}:
+        return ""
+    return str(parent)
 
 
 __all__ = ["AppSettings", "MAX_RECENT_FILES", "default_settings_path"]

@@ -93,6 +93,7 @@ class MainWindowController:
         panel.cancel_task_requested.connect(self.cancel_task)
         panel.case_visibility_changed.connect(self.case_visibility_changed)
         panel.case_color_changed.connect(self.case_color_changed)
+        panel.legend_visibility_changed.connect(plot.set_legend_visible)
 
         plot.request_add_divider.connect(self.add_divider_at)
         plot.request_add_threshold.connect(self.create_threshold_from_plot)
@@ -212,7 +213,6 @@ class MainWindowController:
         plot.set_auxiliary_data(data.auxiliaries, auxiliary_axes, colors=auxiliary_colors)
         for name, visible in self.case_visibility.items():
             plot.set_curve_visible(name, visible)
-        plot.set_active_case(self.window.control_panel.active_case_combo.currentText())
 
         self.window.control_panel.set_case_styles(
             target_names,
@@ -221,6 +221,7 @@ class MainWindowController:
             units=self.case_units,
         )
         self.window.control_panel.set_active_cases(target_names)
+        plot.set_active_case(self.window.control_panel.active_case_combo.currentText())
 
         time_range = data.time_range
         self.divider_manager = DividerManager(time_range=time_range)

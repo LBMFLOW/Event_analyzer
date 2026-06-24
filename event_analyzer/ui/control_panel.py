@@ -3,6 +3,7 @@ from __future__ import annotations
 from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QColorDialog,
     QDoubleSpinBox,
@@ -175,6 +176,7 @@ class ControlPanel(QWidget):
     cancel_task_requested = pyqtSignal()
     case_visibility_changed = pyqtSignal(str, bool)
     case_color_changed = pyqtSignal(str, str)
+    legend_visibility_changed = pyqtSignal(bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -218,6 +220,8 @@ class ControlPanel(QWidget):
         self.edit_divider_button = QPushButton("Edit")
         self.delete_divider_button = QPushButton("Delete")
         self.update_plot_button = QPushButton("Plot / Update")
+        self.show_legend_checkbox = QCheckBox("Show legend")
+        self.show_legend_checkbox.setChecked(True)
 
         self._build_layout()
         self._connect_signals()
@@ -309,10 +313,14 @@ class ControlPanel(QWidget):
         return self.divider_table.currentRow()
 
     def set_active_cases(self, cases: list[str]) -> None:
+        previous = self.active_case_combo.currentText()
         with QSignalBlocker(self.active_case_combo):
             self.active_case_combo.clear()
-            self.active_case_combo.addItem("All cases")
             self.active_case_combo.addItems(cases)
+            if previous in cases:
+                self.active_case_combo.setCurrentText(previous)
+            elif cases:
+                self.active_case_combo.setCurrentIndex(0)
 
     def set_case_styles(
         self,
@@ -421,6 +429,7 @@ class ControlPanel(QWidget):
         plot_group = QGroupBox("Plot")
         plot_layout = QGridLayout(plot_group)
         plot_layout.addWidget(self.update_plot_button, 0, 0)
+        plot_layout.addWidget(self.show_legend_checkbox, 1, 0)
 
         layout.addWidget(file_group)
         layout.addWidget(column_group)
@@ -456,6 +465,7 @@ class ControlPanel(QWidget):
         self.auxiliary_axis_table.assignments_changed.connect(self.column_selection_changed)
         self.case_style_table.color_changed.connect(self.case_color_changed)
         self.case_style_table.itemChanged.connect(self._case_style_item_changed)
+        self.show_legend_checkbox.toggled.connect(self.legend_visibility_changed)
 
     def _target_selection_changed(self) -> None:
         cases = self.selected_target_columns()

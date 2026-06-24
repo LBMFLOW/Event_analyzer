@@ -29,7 +29,8 @@ def test_target_columns_are_derived_from_time_and_auxiliary_selection() -> None:
 
     assert panel.selected_auxiliary_columns() == ["aux_temperature"]
     assert panel.selected_target_columns() == ["case_a", "case_b", "operator_note"]
-    assert panel.active_case_combo.count() == 4  # "All cases" plus three target candidates.
+    assert panel.active_case_combo.count() == 3
+    assert panel.active_case_combo.currentText() == "case_a"
 
     panel.close()
     app.processEvents()

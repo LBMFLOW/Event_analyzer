@@ -70,6 +70,7 @@ class TimeSeriesPlotWidget(QWidget):
         self._auxiliary_values: dict[str, np.ndarray] = {}
         self._display_threshold: float | None = None
         self._display_region: tuple[float | None, float | None] | None = None
+        self._legend_visible = True
         self._extra_axes: dict[str, pg.AxisItem] = {}
         self._extra_views: dict[str, pg.ViewBox] = {}
         self._dividers: dict[str, DividerHandle] = {}
@@ -89,6 +90,37 @@ class TimeSeriesPlotWidget(QWidget):
             pen=pg.mkPen("#2563eb", width=1),
         )
         self._selected_region.setZValue(-10)
+        self._trace_marker = pg.ScatterPlotItem(
+            size=9,
+            brush=pg.mkBrush("#facc15"),
+            pen=pg.mkPen("#92400e", width=1.2),
+        )
+        self._trace_marker.setZValue(40)
+        self._trace_label = pg.TextItem(
+            text="",
+            color="#111827",
+            anchor=(0, 1),
+            fill=pg.mkBrush("#fef08a"),
+            border=pg.mkPen("#a16207", width=1),
+        )
+        self._trace_label.setZValue(41)
+        self._trace_x_axis_label = pg.TextItem(
+            text="",
+            color="#111827",
+            anchor=(0.5, 0),
+            fill=pg.mkBrush("#fef08a"),
+            border=pg.mkPen("#a16207", width=1),
+        )
+        self._trace_x_axis_label.setZValue(42)
+        self._trace_y_axis_label = pg.TextItem(
+            text="",
+            color="#111827",
+            anchor=(0, 0.5),
+            fill=pg.mkBrush("#fef08a"),
+            border=pg.mkPen("#a16207", width=1),
+        )
+        self._trace_y_axis_label.setZValue(42)
+        self._trace_annotation_position: tuple[float, float] | None = None
 
         self._configure_plot()
         self._build_layout()
@@ -157,10 +189,12 @@ class TimeSeriesPlotWidget(QWidget):
 
     def set_active_case(self, case_name: str | None) -> None:
         """Set the target used for slider/tracer readout."""
-        if case_name in (None, "", "All cases"):
-            self._active_case = next(iter(self._target_values), None)
-        elif case_name in self._target_values:
+        if case_name in self._target_values:
             self._active_case = case_name
+        elif self._target_values:
+            self._active_case = next(iter(self._target_values), None)
+        else:
+            self._active_case = None
         self._update_readout(self._current_slider_time())
 
     def set_slider_time(self, time_value: float) -> None:
@@ -254,6 +288,11 @@ class TimeSeriesPlotWidget(QWidget):
         exporter = pg.exporters.SVGExporter(self.plotItem)
         exporter.export(str(path))
 
+    def set_legend_visible(self, visible: bool) -> None:
+        """Show or hide the plot legend without changing plotted curves."""
+        self._legend_visible = bool(visible)
+        self.legend.setVisible(self._legend_visible)
+
     def set_title(self, title: str) -> None:
         """Set the plot title shown in the widget and SVG export."""
         self._title = title
@@ -294,6 +333,7 @@ class TimeSeriesPlotWidget(QWidget):
         """Compatibility helper for earlier code."""
         if value is None:
             self._tracer_line.hide()
+            self._hide_trace_annotation()
         else:
             self.set_slider_time(value)
 
@@ -356,8 +396,16 @@ class TimeSeriesPlotWidget(QWidget):
         self.plotItem.setLabel("left", "y1")
         self.plotItem.setMenuEnabled(False)
         self.plotItem.addItem(self._tracer_line, ignoreBounds=True)
+        self.plotItem.addItem(self._trace_marker, ignoreBounds=True)
+        self.plotItem.addItem(self._trace_label, ignoreBounds=True)
+        self.plotItem.addItem(self._trace_x_axis_label, ignoreBounds=True)
+        self.plotItem.addItem(self._trace_y_axis_label, ignoreBounds=True)
         self.plotItem.addItem(self._selected_region, ignoreBounds=True)
         self._tracer_line.hide()
+        self._trace_marker.hide()
+        self._trace_label.hide()
+        self._trace_x_axis_label.hide()
+        self._trace_y_axis_label.hide()
         self._selected_region.hide()
         self.time_slider.setEnabled(False)
 
@@ -373,7 +421,7 @@ class TimeSeriesPlotWidget(QWidget):
         self._tracer_line.sigPositionChanged.connect(self._tracer_line_moved)
         self.scene().sigMouseClicked.connect(self._scene_mouse_clicked)
         self.plotItem.vb.sigResized.connect(self._update_extra_views)
-        self.plotItem.vb.sigRangeChanged.connect(lambda *_args: self._update_divider_labels())
+        self.plotItem.vb.sigRangeChanged.connect(self._plot_range_changed)
 
     def _set_time(self, time: Sequence[float], *, time_label: str) -> None:
         raw = np.asarray(time, dtype=float)
@@ -530,6 +578,32 @@ class TimeSeriesPlotWidget(QWidget):
         self.readout_label.setText(
             f"Time: {_format_float(time_value)} | Case: {case_name} | Value: {_format_float(value)}"
         )
+        self._update_trace_annotation(time_value, value, case_name)
+
+    def _update_trace_annotation(self, time_value: float, value: float, case_name: str) -> None:
+        if not np.isfinite(time_value) or not np.isfinite(value) or case_name == "-":
+            self._hide_trace_annotation()
+            return
+        self._trace_annotation_position = (float(time_value), float(value))
+        self._trace_marker.setData([time_value], [value])
+        self._trace_label.setText(
+            f"{case_name}\nx: {_format_float(time_value)}\ny: {_format_float(value)}"
+        )
+        self._trace_label.setPos(float(time_value), float(value))
+        self._trace_x_axis_label.setText(f"x: {_format_float(time_value)}")
+        self._trace_y_axis_label.setText(f"y: {_format_float(value)}")
+        self._position_trace_axis_labels()
+        self._trace_marker.show()
+        self._trace_label.show()
+        self._trace_x_axis_label.show()
+        self._trace_y_axis_label.show()
+
+    def _hide_trace_annotation(self) -> None:
+        self._trace_annotation_position = None
+        self._trace_marker.hide()
+        self._trace_label.hide()
+        self._trace_x_axis_label.hide()
+        self._trace_y_axis_label.hide()
 
     def _scene_mouse_clicked(self, event) -> None:
         if not self.plotItem.vb.sceneBoundingRect().contains(event.scenePos()):
@@ -552,10 +626,14 @@ class TimeSeriesPlotWidget(QWidget):
         menu = QMenu(self)
         add_divider_action = QAction("Add divider here", menu)
         add_threshold_action = QAction("Add threshold here", menu)
+        legend_action = QAction("Show legend", menu)
+        legend_action.setCheckable(True)
+        legend_action.setChecked(self._legend_visible)
         reset_view_action = QAction("Reset view", menu)
         export_svg_action = QAction("Export SVG", menu)
         menu.addAction(add_divider_action)
         menu.addAction(add_threshold_action)
+        menu.addAction(legend_action)
         menu.addSeparator()
         menu.addAction(reset_view_action)
         menu.addAction(export_svg_action)
@@ -565,6 +643,8 @@ class TimeSeriesPlotWidget(QWidget):
             self.request_add_divider.emit(x)
         elif action == add_threshold_action:
             self.request_add_threshold.emit(y)
+        elif action == legend_action:
+            self.set_legend_visible(legend_action.isChecked())
         elif action == reset_view_action:
             self.reset_view()
         elif action == export_svg_action:
@@ -585,6 +665,20 @@ class TimeSeriesPlotWidget(QWidget):
     def _threshold_line_moved(self, line: pg.InfiniteLine) -> None:
         value = float(line.value())
         self.threshold_moved.emit(value)
+
+    def _plot_range_changed(self, *_args) -> None:
+        self._update_divider_labels()
+        self._position_trace_axis_labels()
+
+    def _position_trace_axis_labels(self) -> None:
+        if self._trace_annotation_position is None:
+            return
+        time_value, value = self._trace_annotation_position
+        x_range, y_range = self.view_range()
+        x_span = max(abs(x_range[1] - x_range[0]), 1.0)
+        y_span = max(abs(y_range[1] - y_range[0]), 1.0)
+        self._trace_x_axis_label.setPos(time_value, y_range[0] + y_span * 0.025)
+        self._trace_y_axis_label.setPos(x_range[0] + x_span * 0.01, value)
 
     def _update_divider_labels(self) -> None:
         for handle in self._dividers.values():

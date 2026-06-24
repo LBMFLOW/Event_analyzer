@@ -116,8 +116,10 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertIn("Cell voltage - delta_OCV 2 very long case label 002", text)
         self.assertIn(">12.34<", text)
         self.assertNotIn("...", text)
+        self.assertIn('font-size="28"', text)
         width = int(re.search(r'width="(\d+)"', text).group(1))
         self.assertGreater(width, 900)
+        self.assertLessEqual(width, 2200)
 
 
 if __name__ == "__main__":

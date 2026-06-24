@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from collections import defaultdict
 from pathlib import Path
+import textwrap
 
 import numpy as np
 import pyqtgraph as pg
@@ -100,11 +101,22 @@ class ExceedanceBarChartWidget(QWidget):
 
         if not self._events:
             self._set_canvas_width(case_count=1)
-            axis.set_title("Exceedance durations")
-            axis.set_xlabel("Case")
-            axis.set_ylabel(f"Duration above threshold ({self.time_unit})")
-            axis.text(0.5, 0.5, "No exceedance events", transform=axis.transAxes, ha="center", va="center")
+            self.figure.suptitle("Exceedance durations", fontsize=18, y=0.96)
+            axis.set_xlabel("Case", fontsize=14)
+            axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
+            axis.text(
+                0.5,
+                0.5,
+                "No exceedance events",
+                transform=axis.transAxes,
+                ha="center",
+                va="center",
+                fontsize=13,
+            )
+            axis.tick_params(axis="both", labelsize=12)
             axis.grid(axis="y", alpha=0.25)
+            self.figure.set_tight_layout(False)
+            self.figure.subplots_adjust(left=0.085, right=0.985, top=0.82, bottom=0.18)
             self.status_label.setText("No exceedance events")
             self.canvas.draw_idle()
             return
@@ -116,7 +128,7 @@ class ExceedanceBarChartWidget(QWidget):
         width = min(0.82 / max_events_for_case, 0.24)
         colors = colormaps["tab20"].colors
         total_bars = len(self._events)
-        show_labels = self.show_value_labels and total_bars <= self.value_label_limit
+        show_labels = self.show_value_labels and total_bars <= max(self.value_label_limit, 120)
 
         self._set_canvas_width(case_count=len(cases))
 
@@ -152,32 +164,41 @@ class ExceedanceBarChartWidget(QWidget):
                         _format_number(event.duration),
                         ha="center",
                         va="bottom",
-                        fontsize=8,
+                        fontsize=11,
                     )
 
-        axis.set_title("Exceedance durations by case")
-        axis.set_xlabel("Case")
-        axis.set_ylabel(f"Duration above threshold ({self.time_unit})")
+        axis.set_ylim(0, max(1.0, max((event.duration for event in self._events), default=1.0) * 1.16))
+        self.figure.suptitle("Exceedance durations by case", fontsize=18, y=0.975)
+        self.figure.text(0.075, 0.925, f"Events: {len(self._events)}", fontsize=11, color="#111827")
+        axis.set_xlabel("Case", fontsize=14)
+        axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
         axis.set_xticks(x_positions)
         axis.set_xticklabels(
-            cases,
-            rotation=_label_rotation(len(cases)),
+            [_wrap_label_for_matplotlib(case, max_chars=_matplotlib_label_line_length(len(cases))) for case in cases],
+            rotation=52,
             ha="right",
             rotation_mode="anchor",
             fontsize=_axis_label_font_size(len(cases)),
         )
+        axis.tick_params(axis="y", labelsize=12)
         axis.grid(axis="y", alpha=0.25)
         axis.margins(x=0.02)
         self.figure.set_tight_layout(False)
         self.figure.subplots_adjust(
-            left=0.075,
-            right=0.99,
-            top=0.88,
+            left=0.085,
+            right=0.985,
+            top=0.76,
             bottom=_bottom_margin(len(cases)),
         )
 
         if max_events_for_case <= 8:
-            axis.legend(loc="best", fontsize=8, ncols=2 if max_events_for_case > 4 else 1)
+            axis.legend(
+                loc="upper left",
+                bbox_to_anchor=(0.0, 1.16),
+                fontsize=11,
+                ncols=min(max_events_for_case, 4),
+                frameon=False,
+            )
         else:
             axis.text(
                 0.99,
@@ -186,7 +207,7 @@ class ExceedanceBarChartWidget(QWidget):
                 transform=axis.transAxes,
                 ha="right",
                 va="top",
-                fontsize=8,
+                fontsize=11,
             )
 
         self.status_label.setText(
@@ -200,7 +221,7 @@ class ExceedanceBarChartWidget(QWidget):
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
             _export_fallback_svg(self._events, path)
             return
-        self.figure.savefig(path, format="svg", bbox_inches="tight")
+        self.figure.savefig(path, format="svg", bbox_inches="tight", pad_inches=0.12)
 
     save_svg = export_svg
 
@@ -388,8 +409,10 @@ class ExceedanceBarChartWidget(QWidget):
     def _set_canvas_width(self, *, case_count: int) -> None:
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
             return
-        max_label_length = max((len(event.case_name) for event in self._events), default=12)
-        width_inches = max(9.0, min(120.0, (0.18 * max_label_length + 0.42) * max(1, case_count) + 2.5))
+        # Keep the figure close to a slide-friendly aspect ratio. Very wide
+        # SVGs are hard to paste into PowerPoint because they are scaled down
+        # aggressively; wrapped labels carry the full case names instead.
+        width_inches = max(10.5, min(14.2, 9.8 + 0.105 * max(1, case_count)))
         height_inches = _canvas_height_inches(case_count)
         self.figure.set_size_inches(width_inches, height_inches, forward=True)
         dpi = self.figure.dpi
@@ -398,7 +421,7 @@ class ExceedanceBarChartWidget(QWidget):
     def _set_fallback_canvas_width(self, *, case_count: int) -> None:
         if not isinstance(self.canvas, pg.PlotWidget):
             return
-        width = max(900, min(12000, int(58 * max(1, case_count) + 260)))
+        width = max(900, min(2400, int(38 * max(1, case_count) + 320)))
         self.canvas.setMinimumSize(width, _fallback_canvas_height(case_count))
 
 
@@ -429,56 +452,119 @@ def _axis_label_length(case_count: int) -> int:
 
 def _axis_label_font_size(case_count: int) -> int:
     if case_count <= 12:
-        return 8
-    if case_count <= 30:
-        return 7
-    return 6
+        return 12
+    if case_count <= 45:
+        return 11
+    return 10
+
+
+def _matplotlib_label_line_length(case_count: int) -> int:
+    if case_count <= 8:
+        return 26
+    if case_count <= 25:
+        return 20
+    if case_count <= 60:
+        return 16
+    return 12
+
+
+def _wrap_label_for_matplotlib(label: str, *, max_chars: int) -> str:
+    return "\n".join(_wrap_label_lines(label, max_chars=max_chars))
 
 
 def _bottom_margin(case_count: int) -> float:
     if case_count <= 8:
-        return 0.24
+        return 0.30
     if case_count <= 25:
-        return 0.31
-    return 0.38
+        return 0.38
+    if case_count <= 60:
+        return 0.46
+    return 0.52
 
 
 def _canvas_height_inches(case_count: int) -> float:
     if case_count <= 8:
-        return 4.2
+        return 6.6
     if case_count <= 25:
-        return 4.8
-    return 5.3
+        return 7.3
+    if case_count <= 60:
+        return 7.9
+    return 8.6
 
 
 def _fallback_axis_height(case_count: int) -> int:
     if case_count <= 8:
-        return 88
+        return 110
     if case_count <= 25:
-        return 118
-    return 138
+        return 150
+    return 178
 
 
 def _fallback_canvas_height(case_count: int) -> int:
     if case_count <= 8:
-        return 430
+        return 520
     if case_count <= 25:
-        return 480
-    return 540
+        return 610
+    return 700
 
 
 def _fallback_label_space_fraction(case_count: int) -> float:
     if case_count <= 8:
-        return 0.24
+        return 0.30
     if case_count <= 25:
-        return 0.34
-    return 0.45
+        return 0.40
+    return 0.52
 
 
 def _short_case_label(case_name: str, *, max_length: int = 24) -> str:
     if len(case_name) <= max_length:
         return case_name
     return f"{case_name[: max_length - 1]}..."
+
+
+def _svg_label_line_length(case_count: int) -> int:
+    if case_count <= 8:
+        return 28
+    if case_count <= 25:
+        return 20
+    if case_count <= 60:
+        return 15
+    return 12
+
+
+def _wrap_label_lines(label: str, *, max_chars: int) -> list[str]:
+    normalized = " ".join(str(label).split())
+    if not normalized:
+        return [""]
+    lines = textwrap.wrap(
+        normalized,
+        width=max(4, max_chars),
+        break_long_words=True,
+        break_on_hyphens=False,
+    )
+    return lines or [normalized]
+
+
+def _svg_multiline_case_label(
+    label: str,
+    *,
+    x: float,
+    y: float,
+    lines: list[str],
+    font_size: int,
+    angle: int,
+) -> str:
+    escaped_label = _xml_escape(label)
+    output = [
+        f'<text x="{x:.1f}" y="{y:.1f}" font-family="Arial" font-size="{font_size}" '
+        f'text-anchor="end" transform="rotate({angle} {x:.1f} {y:.1f})">',
+        f"<title>{escaped_label}</title>",
+    ]
+    for index, line in enumerate(lines):
+        dy = "0" if index == 0 else f"{font_size * 1.12:.1f}"
+        output.append(f'<tspan x="{x:.1f}" dy="{dy}">{_xml_escape(line)}</tspan>')
+    output.append("</text>")
+    return "\n".join(output)
 
 
 def _format_number(value: float) -> str:
@@ -491,34 +577,43 @@ def _export_fallback_svg(events: list[ExceedanceEvent], path: str | Path) -> Non
     grouped = _group_events_by_case(events)
     cases = list(grouped)
     max_events_for_case = max((len(case_events) for case_events in grouped.values()), default=1)
-    max_label_length = max((len(case) for case in cases), default=8)
-    case_slot_width = max(92, min(340, int(max_label_length * 6.2)))
-    left_margin = 96
-    right_margin = 160
-    top_margin = 126
-    label_band = max(150, min(420, int(max_label_length * 5.8)))
-    bottom_margin = label_band + 58
-    plot_height = 310
-    plot_width = max(720, case_slot_width * max(1, len(cases)))
-    width = left_margin + plot_width + right_margin
+    case_count = max(1, len(cases))
+    label_line_length = _svg_label_line_length(case_count)
+    wrapped_labels = {
+        case: _wrap_label_lines(case, max_chars=label_line_length)
+        for case in cases
+    }
+    max_label_lines = max((len(lines) for lines in wrapped_labels.values()), default=1)
+    legend_slots = min(max_events_for_case, 8)
+    legend_columns = max(1, min(legend_slots, 4))
+    legend_rows = max(1, (legend_slots + legend_columns - 1) // legend_columns)
+
+    width = max(1200, min(2200, int(40 * case_count + 460)))
+    left_margin = 128
+    right_margin = 54
+    top_margin = 158 + max(0, legend_rows - 1) * 30
+    bottom_margin = max(280, min(440, 150 + max_label_lines * 46))
+    plot_height = 440
+    plot_width = width - left_margin - right_margin
     height = top_margin + plot_height + bottom_margin
     plot_x = left_margin
     plot_y = top_margin
     max_duration = max((event.duration for event in events), default=1.0)
-    y_scale_max = max(1.0, max_duration * 1.16)
-    legend_slots = min(max_events_for_case, 8)
+    y_scale_max = max(1.0, max_duration * 1.2)
     legend_x = plot_x
-    legend_y = 74
+    legend_y = 96
+    x_label_font_size = 14 if case_count <= 45 else 13
+    value_font_size = 14 if case_count <= 45 else 13
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="white"/>',
-        '<text x="24" y="32" font-family="Arial" font-size="20">Exceedance durations by case</text>',
-        f'<text x="24" y="56" font-family="Arial" font-size="12">Events: {len(events)}</text>',
+        '<text x="28" y="42" font-family="Arial" font-size="28">Exceedance durations by case</text>',
+        f'<text x="28" y="70" font-family="Arial" font-size="16">Events: {len(events)}</text>',
         f'<rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d4d4d8" stroke-width="0.7"/>',
         f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
         f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
-        f'<text x="{plot_x + plot_width / 2:.1f}" y="{height - 18}" font-family="Arial" font-size="13" text-anchor="middle">Case</text>',
-        f'<text x="18" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="13" transform="rotate(-90 18 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
+        f'<text x="{plot_x + plot_width / 2:.1f}" y="{height - 24}" font-family="Arial" font-size="18" text-anchor="middle">Case</text>',
+        f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="18" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
     ]
     for tick_index in range(5):
         value = y_scale_max * tick_index / 4
@@ -528,17 +623,17 @@ def _export_fallback_svg(events: list[ExceedanceEvent], path: str | Path) -> Non
             'stroke="#e4e4e7" stroke-width="0.6"/>'
         )
         lines.append(
-            f'<text x="{plot_x - 8}" y="{y + 4:.1f}" font-family="Arial" font-size="10" '
+            f'<text x="{plot_x - 10}" y="{y + 5:.1f}" font-family="Arial" font-size="14" '
             f'text-anchor="end">{_format_number(value)}</text>'
         )
     if not events:
         lines.append(
             f'<text x="{plot_x + plot_width / 2:.1f}" y="{plot_y + plot_height / 2:.1f}" '
-            'font-family="Arial" font-size="14" text-anchor="middle">No exceedance events</text>'
+            'font-family="Arial" font-size="18" text-anchor="middle">No exceedance events</text>'
         )
     else:
-        case_width = plot_width / max(1, len(cases))
-        bar_width = min(34.0, case_width * 0.78 / max_events_for_case)
+        case_width = plot_width / case_count
+        bar_width = max(3.0, min(30.0, case_width * 0.78 / max_events_for_case))
         for event_slot in range(max_events_for_case):
             color = color_for_index(event_slot)
             for case_index, case in enumerate(cases):
@@ -557,27 +652,34 @@ def _export_fallback_svg(events: list[ExceedanceEvent], path: str | Path) -> Non
                     f'fill="{color}" stroke="#3f3f46" stroke-width="0.5"/>'
                 )
                 lines.append(
-                    f'<text x="{x + bar_width * 0.45:.1f}" y="{max(plot_y + 12, y - 4):.1f}" '
-                    f'font-family="Arial" font-size="10" text-anchor="middle">{duration_label}</text>'
+                    f'<text x="{x + bar_width * 0.45:.1f}" y="{max(plot_y + 18, y - 7):.1f}" '
+                    f'font-family="Arial" font-size="{value_font_size}" text-anchor="middle">{duration_label}</text>'
                 )
         for case_index, case in enumerate(cases):
             x = plot_x + case_width * (case_index + 0.5)
-            label = _xml_escape(case)
-            y = plot_y + plot_height + 22
+            y = plot_y + plot_height + 28
             lines.append(
-                f'<text x="{x:.1f}" y="{y}" font-family="Arial" font-size="10" '
-                f'text-anchor="end" transform="rotate(-62 {x:.1f} {y})">{label}</text>'
+                _svg_multiline_case_label(
+                    case,
+                    x=x,
+                    y=y,
+                    lines=wrapped_labels[case],
+                    font_size=x_label_font_size,
+                    angle=-56,
+                )
             )
         for event_slot in range(legend_slots):
-            x = legend_x + event_slot * 96
-            y = legend_y
-            lines.append(f'<rect x="{x}" y="{y - 10}" width="12" height="12" fill="{color_for_index(event_slot)}"/>')
+            column = event_slot % legend_columns
+            row = event_slot // legend_columns
+            x = legend_x + column * 150
+            y = legend_y + row * 30
+            lines.append(f'<rect x="{x}" y="{y - 14}" width="16" height="16" fill="{color_for_index(event_slot)}"/>')
             lines.append(
-                f'<text x="{x + 16}" y="{y}" font-family="Arial" font-size="11">Event {event_slot + 1}</text>'
+                f'<text x="{x + 22}" y="{y}" font-family="Arial" font-size="16">Event {event_slot + 1}</text>'
             )
         if max_events_for_case > legend_slots:
             lines.append(
-                f'<text x="{legend_x + legend_slots * 96}" y="{legend_y}" font-family="Arial" font-size="11">'
+                f'<text x="{legend_x + legend_columns * 150 + 8}" y="{legend_y}" font-family="Arial" font-size="16">'
                 f'Events 1-{max_events_for_case}</text>'
             )
     lines.append("</svg>")

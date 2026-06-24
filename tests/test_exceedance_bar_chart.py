@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import os
+import re
 import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -13,7 +14,7 @@ if PYQT_AVAILABLE:
     from PyQt6.QtWidgets import QApplication
 
     from event_analyzer.analysis.exceedance import ExceedanceEvent
-    from event_analyzer.plotting.exceedance_chart import ExceedanceBarChartWidget
+    from event_analyzer.plotting.exceedance_chart import ExceedanceBarChartWidget, _export_fallback_svg
 
 
 @unittest.skipUnless(PYQT_AVAILABLE, "PyQt6 is required")
@@ -78,6 +79,45 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
 
         self.assertEqual(len(widget.events), 18)
         self.assertIn("events across", widget.status_label.text())
+
+    def test_fallback_svg_uses_full_labels_and_duration_values(self) -> None:
+        events = [
+            ExceedanceEvent(
+                "Cell voltage - delta_OCV 2 very long case label 001",
+                1,
+                0.0,
+                12.34,
+                12.34,
+                5.0,
+                6.0,
+                1.0,
+                0.0,
+                20.0,
+            ),
+            ExceedanceEvent(
+                "Cell voltage - delta_OCV 2 very long case label 002",
+                1,
+                1.0,
+                8.75,
+                7.75,
+                4.0,
+                5.0,
+                1.0,
+                0.0,
+                20.0,
+            ),
+        ]
+        path = Path.cwd() / "test_exceedance_chart_fallback.svg"
+
+        _export_fallback_svg(events, path)
+        text = path.read_text(encoding="utf-8")
+
+        self.assertIn("Cell voltage - delta_OCV 2 very long case label 001", text)
+        self.assertIn("Cell voltage - delta_OCV 2 very long case label 002", text)
+        self.assertIn(">12.34<", text)
+        self.assertNotIn("...", text)
+        width = int(re.search(r'width="(\d+)"', text).group(1))
+        self.assertGreater(width, 900)
 
 
 if __name__ == "__main__":

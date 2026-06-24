@@ -56,6 +56,29 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertTrue(path.exists())
         self.assertIn("<svg", path.read_text(encoding="utf-8", errors="ignore").lower())
 
+    def test_long_case_labels_render_without_crashing(self) -> None:
+        widget = ExceedanceBarChartWidget()
+        events = [
+            ExceedanceEvent(
+                f"Cell voltage - delta_OCV 2 very long case label {index}",
+                1,
+                0.0,
+                1.0,
+                float(index + 1),
+                float(index + 2),
+                0.5,
+                1.0,
+                0.0,
+                2.0,
+            )
+            for index in range(18)
+        ]
+
+        widget.set_events(events)
+
+        self.assertEqual(len(widget.events), 18)
+        self.assertIn("events across", widget.status_label.text())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -159,9 +159,22 @@ class ExceedanceBarChartWidget(QWidget):
         axis.set_xlabel("Case")
         axis.set_ylabel(f"Duration above threshold ({self.time_unit})")
         axis.set_xticks(x_positions)
-        axis.set_xticklabels(cases, rotation=_label_rotation(len(cases)), ha="right")
+        axis.set_xticklabels(
+            [_short_case_label(case, max_length=_axis_label_length(len(cases))) for case in cases],
+            rotation=_label_rotation(len(cases)),
+            ha="right",
+            rotation_mode="anchor",
+            fontsize=_axis_label_font_size(len(cases)),
+        )
         axis.grid(axis="y", alpha=0.25)
         axis.margins(x=0.02)
+        self.figure.set_tight_layout(False)
+        self.figure.subplots_adjust(
+            left=0.075,
+            right=0.99,
+            top=0.88,
+            bottom=_bottom_margin(len(cases)),
+        )
 
         if max_events_for_case <= 8:
             axis.legend(loc="best", fontsize=8, ncols=2 if max_events_for_case > 4 else 1)
@@ -320,22 +333,35 @@ class ExceedanceBarChartWidget(QWidget):
                     plot_item.addItem(label)
                     label.setPos(x_value, height)
 
-        bottom_axis = plot_item.getAxis("bottom")
-        bottom_axis.setTicks([[(float(position), _short_case_label(case)) for position, case in zip(x_positions, cases)]])
-        try:
-            bottom_axis.setStyle(tickTextAngle=_label_rotation(len(cases)))
-        except (NameError, TypeError):
-            pass
-        bottom_axis.setHeight(90 if len(cases) > 8 else 62)
-
         max_duration = max((event.duration for event in self._events), default=1.0)
         y_max = max(1.0, max_duration * 1.15)
+        label_space = y_max * _fallback_label_space_fraction(len(cases))
+        bottom_axis = plot_item.getAxis("bottom")
+        bottom_axis.setTicks([[(float(position), "") for position in x_positions]])
+        bottom_axis.setHeight(_fallback_axis_height(len(cases)))
+        self._add_fallback_case_labels(plot_item, cases, x_positions, label_y=-label_space * 0.1)
         plot_item.setXRange(-0.75, len(cases) - 0.25, padding=0)
-        plot_item.setYRange(0, y_max, padding=0)
+        plot_item.setYRange(-label_space, y_max, padding=0)
         self.status_label.setText(
             f"{len(self._events)} events across {len(cases)} cases. "
             "Click a bar to select its event and move the plot tracer to peak time."
         )
+
+    def _add_fallback_case_labels(self, plot_item, cases: list[str], x_positions: np.ndarray, *, label_y: float) -> None:
+        angle = -_label_rotation(len(cases))
+        label_length = _axis_label_length(len(cases))
+        for position, case_name in zip(x_positions, cases):
+            label = pg.TextItem(
+                _short_case_label(case_name, max_length=label_length),
+                color="#71717a",
+                anchor=(1, 0.5),
+            )
+            try:
+                label.setAngle(angle)
+            except AttributeError:
+                pass
+            plot_item.addItem(label, ignoreBounds=True)
+            label.setPos(float(position), label_y)
 
     def _fallback_mouse_clicked(self, mouse_event) -> None:
         if not isinstance(self.canvas, pg.PlotWidget):
@@ -363,7 +389,7 @@ class ExceedanceBarChartWidget(QWidget):
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
             return
         width_inches = max(9.0, min(80.0, 0.58 * max(1, case_count) + 2.5))
-        height_inches = 3.8
+        height_inches = _canvas_height_inches(case_count)
         self.figure.set_size_inches(width_inches, height_inches, forward=True)
         dpi = self.figure.dpi
         self.canvas.setMinimumSize(int(width_inches * dpi), int(height_inches * dpi))
@@ -372,7 +398,7 @@ class ExceedanceBarChartWidget(QWidget):
         if not isinstance(self.canvas, pg.PlotWidget):
             return
         width = max(900, min(12000, int(58 * max(1, case_count) + 260)))
-        self.canvas.setMinimumSize(width, 380)
+        self.canvas.setMinimumSize(width, _fallback_canvas_height(case_count))
 
 
 def _group_events_by_case(events: list[ExceedanceEvent]) -> dict[str, list[ExceedanceEvent]]:
@@ -386,10 +412,66 @@ def _group_events_by_case(events: list[ExceedanceEvent]) -> dict[str, list[Excee
 
 def _label_rotation(case_count: int) -> int:
     if case_count <= 6:
-        return 20
-    if case_count <= 20:
         return 35
-    return 60
+    if case_count <= 20:
+        return 55
+    return 70
+
+
+def _axis_label_length(case_count: int) -> int:
+    if case_count <= 8:
+        return 28
+    if case_count <= 25:
+        return 20
+    return 14
+
+
+def _axis_label_font_size(case_count: int) -> int:
+    if case_count <= 12:
+        return 8
+    if case_count <= 30:
+        return 7
+    return 6
+
+
+def _bottom_margin(case_count: int) -> float:
+    if case_count <= 8:
+        return 0.24
+    if case_count <= 25:
+        return 0.31
+    return 0.38
+
+
+def _canvas_height_inches(case_count: int) -> float:
+    if case_count <= 8:
+        return 4.2
+    if case_count <= 25:
+        return 4.8
+    return 5.3
+
+
+def _fallback_axis_height(case_count: int) -> int:
+    if case_count <= 8:
+        return 88
+    if case_count <= 25:
+        return 118
+    return 138
+
+
+def _fallback_canvas_height(case_count: int) -> int:
+    if case_count <= 8:
+        return 430
+    if case_count <= 25:
+        return 480
+    return 540
+
+
+def _fallback_label_space_fraction(case_count: int) -> float:
+    if case_count <= 8:
+        return 0.24
+    if case_count <= 25:
+        return 0.34
+    return 0.45
 
 
 def _short_case_label(case_name: str, *, max_length: int = 24) -> str:

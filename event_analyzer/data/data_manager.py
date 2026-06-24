@@ -276,6 +276,7 @@ class DataManager:
         time_column: str,
         target_columns: Sequence[str],
         auxiliary_columns: Sequence[str] | None = None,
+        ignore_invalid_targets: bool = False,
         cancel_token: object | None = None,
         progress_callback: Callable[[int, int, str], None] | None = None,
     ) -> LoadedData:
@@ -299,6 +300,7 @@ class DataManager:
                 time_column=time_column,
                 target_columns=target_columns,
                 auxiliary_columns=auxiliary_columns,
+                ignore_invalid_targets=ignore_invalid_targets,
                 cancel_token=cancel_token,
                 progress_callback=progress_callback,
             )
@@ -349,14 +351,19 @@ class DataManager:
                 total_steps,
                 f"Converting target {offset:,}/{total_series:,}: {name}",
             )
-            loaded_targets[name] = self._coerce_numeric_series(
-                frame[name],
-                name,
-                valid_time_mask,
-                order,
-                warnings,
-                role="target",
-            )
+            try:
+                loaded_targets[name] = self._coerce_numeric_series(
+                    frame[name],
+                    name,
+                    valid_time_mask,
+                    order,
+                    warnings,
+                    role="target",
+                )
+            except NonNumericColumnError:
+                if not ignore_invalid_targets:
+                    raise
+                warnings.append(f"Skipped target column '{name}' because it contains no usable numeric values.")
             progress_step += 1
 
         loaded_auxiliaries: dict[str, np.ndarray] = {}
@@ -379,6 +386,8 @@ class DataManager:
             progress_step += 1
 
         _report(progress_callback, total_steps, total_steps, "Selected data ready")
+        if not loaded_targets:
+            raise DataManagerError("No selected target columns contain usable numeric values.")
         return LoadedData(
             path=metadata.path,
             time_column=time_column,
@@ -426,6 +435,7 @@ class DataManager:
         time_column: str,
         target_columns: Sequence[str],
         auxiliary_columns: Sequence[str] | None,
+        ignore_invalid_targets: bool,
         cancel_token: object | None,
         progress_callback: Callable[[int, int, str], None] | None,
     ) -> LoadedData:
@@ -465,14 +475,19 @@ class DataManager:
         for offset, name in enumerate(targets, start=1):
             _raise_if_cancelled(cancel_token)
             _report(progress_callback, progress_step, total_steps, f"Converting target {offset:,}/{total_series:,}: {name}")
-            loaded_targets[name] = self._coerce_numeric_values(
-                columns[name],
-                name,
-                valid_time_mask,
-                order,
-                warnings,
-                role="target",
-            )
+            try:
+                loaded_targets[name] = self._coerce_numeric_values(
+                    columns[name],
+                    name,
+                    valid_time_mask,
+                    order,
+                    warnings,
+                    role="target",
+                )
+            except NonNumericColumnError:
+                if not ignore_invalid_targets:
+                    raise
+                warnings.append(f"Skipped target column '{name}' because it contains no usable numeric values.")
             progress_step += 1
 
         loaded_auxiliaries: dict[str, np.ndarray] = {}
@@ -495,6 +510,8 @@ class DataManager:
             progress_step += 1
 
         _report(progress_callback, total_steps, total_steps, "Selected data ready")
+        if not loaded_targets:
+            raise DataManagerError("No selected target columns contain usable numeric values.")
         return LoadedData(
             path=metadata.path,
             time_column=time_column,
@@ -585,6 +602,12 @@ class DataManager:
         profiles = {profile.name: profile for profile in self.metadata.columns}
         for column in columns:
             profile = profiles[column]
+            if role == "target":
+                # Target/case columns are allowed to be ragged: a case may end
+                # before the global time axis ends, leaving blanks that become
+                # NaN plot gaps. Full numeric validation happens after loading,
+                # where we only require at least one usable numeric value.
+                continue
             if not profile.is_numeric:
                 raise NonNumericColumnError(
                     f"Selected {role} column '{column}' is not numeric enough for plotting "
@@ -715,17 +738,28 @@ class DataManager:
         valid_ratio = _finite_ratio(values_with_valid_time)
         invalid_ratio = 1.0 - valid_ratio
 
-        if valid_ratio < self.min_numeric_valid_ratio:
+        if valid_ratio == 0.0:
+            raise NonNumericColumnError(
+                f"Selected {role} column '{name}' contains no usable numeric values after time filtering."
+            )
+
+        if role != "target" and valid_ratio < self.min_numeric_valid_ratio:
             raise TooManyInvalidValuesError(
                 f"Selected {role} column '{name}' has {invalid_ratio:.1%} missing or invalid values "
                 f"after time filtering; allowed maximum is {(1.0 - self.min_numeric_valid_ratio):.0%}."
             )
 
         if invalid_ratio > 0:
-            warnings.append(
-                f"Column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
-                "they are represented as NaN gaps."
-            )
+            if role == "target":
+                warnings.append(
+                    f"Target column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
+                    "those samples are shown as plot gaps and ignored by threshold analysis."
+                )
+            else:
+                warnings.append(
+                    f"Column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
+                    "they are represented as NaN gaps."
+                )
 
         return values_with_valid_time[order]
 
@@ -744,17 +778,28 @@ class DataManager:
         valid_ratio = _finite_ratio(values_with_valid_time)
         invalid_ratio = 1.0 - valid_ratio
 
-        if valid_ratio < self.min_numeric_valid_ratio:
+        if valid_ratio == 0.0:
+            raise NonNumericColumnError(
+                f"Selected {role} column '{name}' contains no usable numeric values after time filtering."
+            )
+
+        if role != "target" and valid_ratio < self.min_numeric_valid_ratio:
             raise TooManyInvalidValuesError(
                 f"Selected {role} column '{name}' has {invalid_ratio:.1%} missing or invalid values "
                 f"after time filtering; allowed maximum is {(1.0 - self.min_numeric_valid_ratio):.0%}."
             )
 
         if invalid_ratio > 0:
-            warnings.append(
-                f"Column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
-                "they are represented as NaN gaps."
-            )
+            if role == "target":
+                warnings.append(
+                    f"Target column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
+                    "those samples are shown as plot gaps and ignored by threshold analysis."
+                )
+            else:
+                warnings.append(
+                    f"Column '{name}' has {invalid_ratio:.1%} missing or invalid values; "
+                    "they are represented as NaN gaps."
+                )
         return values_with_valid_time[order]
 
     def _numeric_ratio(self, series: pl.Series) -> float:

@@ -94,19 +94,41 @@ def test_csv_loading_rejects_invalid_columns(workspace_tmp: Path) -> None:
         manager.select_columns(time_column="operator_note", target_columns=["case_a"])
 
 
-def test_csv_loading_rejects_columns_with_too_many_missing_values(workspace_tmp: Path) -> None:
-    path = workspace_tmp / "too_many_missing.csv"
+def test_csv_loading_accepts_ragged_target_columns(workspace_tmp: Path) -> None:
+    path = workspace_tmp / "ragged_target.csv"
     _write_rows(
         path,
-        ["time_s", "mostly_missing"],
+        ["time_s", "ends_early"],
         [[0, 1.0], [1, ""], [2, ""], [3, ""]],
+    )
+
+    manager = DataManager(preview_rows=1, min_numeric_valid_ratio=0.75)
+    manager.open_csv(path)
+    loaded = manager.select_columns(time_column="time_s", target_columns=["ends_early"])
+
+    assert loaded.row_count == 4
+    assert loaded.targets["ends_early"][0] == 1.0
+    assert loaded.targets["ends_early"][1] != loaded.targets["ends_early"][1]
+    assert loaded.warnings
+
+
+def test_csv_loading_rejects_auxiliary_columns_with_too_many_missing_values(workspace_tmp: Path) -> None:
+    path = workspace_tmp / "too_many_missing_aux.csv"
+    _write_rows(
+        path,
+        ["time_s", "case_a", "mostly_missing_aux"],
+        [[0, 1.0, 1.0], [1, 2.0, ""], [2, 3.0, ""], [3, 4.0, ""]],
     )
 
     manager = DataManager(preview_rows=1, min_numeric_valid_ratio=0.75)
     manager.open_csv(path)
 
     with pytest.raises(TooManyInvalidValuesError):
-        manager.select_columns(time_column="time_s", target_columns=["mostly_missing"])
+        manager.select_columns(
+            time_column="time_s",
+            target_columns=["case_a"],
+            auxiliary_columns=["mostly_missing_aux"],
+        )
 
 
 def test_target_and_auxiliary_column_selection_are_loaded_separately(workspace_tmp: Path) -> None:
@@ -125,6 +147,26 @@ def test_target_and_auxiliary_column_selection_are_loaded_separately(workspace_t
     assert set(loaded.auxiliaries) == {"aux_pressure"}
     assert "case_beta" not in loaded.targets
     assert "aux_temperature" not in loaded.auxiliaries
+
+
+def test_auto_target_loading_can_skip_text_only_leftover_columns(workspace_tmp: Path) -> None:
+    path = workspace_tmp / "auto_targets_with_note.csv"
+    _write_rows(
+        path,
+        ["time_s", "case_a", "operator_note"],
+        [[0, 1.0, "ok"], [1, 2.0, "maintenance"]],
+    )
+
+    manager = DataManager(preview_rows=2)
+    manager.open_csv(path)
+    loaded = manager.select_columns(
+        time_column="time_s",
+        target_columns=["case_a", "operator_note"],
+        ignore_invalid_targets=True,
+    )
+
+    assert list(loaded.targets) == ["case_a"]
+    assert any("Skipped target column 'operator_note'" in warning for warning in loaded.warnings)
 
 
 def test_sample_data_generator_writes_expected_columns(workspace_tmp: Path) -> None:

@@ -178,6 +178,8 @@ class ControlPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._all_columns: list[str] = []
+        self._numeric_columns: list[str] = []
         self.file_label = QLabel("No CSV loaded")
         self.file_label.setWordWrap(True)
         self.row_count_label = QLabel("Rows: -")
@@ -188,7 +190,7 @@ class ControlPanel(QWidget):
         self.cancel_task_button = QPushButton("Cancel")
         self.cancel_task_button.setVisible(False)
         self.time_column_combo = QComboBox()
-        self.target_selector = SearchableColumnSelector("Target case columns")
+        self.target_selector = SearchableColumnSelector("Auto target case columns")
         self.auxiliary_selector = SearchableColumnSelector("Auxiliary columns")
         self.auxiliary_axis_table = AuxiliaryAxisTable()
         self.case_style_table = CaseStyleTable()
@@ -251,6 +253,8 @@ class ControlPanel(QWidget):
         likely_time_columns: list[str],
     ) -> None:
         numeric = set(numeric_columns)
+        self._all_columns = list(columns)
+        self._numeric_columns = list(numeric_columns)
         disabled = set(columns) - numeric
         with QSignalBlocker(self.time_column_combo):
             self.time_column_combo.clear()
@@ -263,6 +267,7 @@ class ControlPanel(QWidget):
         self.set_active_cases([])
         self.auxiliary_axis_table.set_auxiliary_columns([])
         self.case_style_table.set_cases([])
+        self._sync_auto_targets()
 
     def selected_time_column(self) -> str:
         return self.time_column_combo.currentText()
@@ -271,9 +276,10 @@ class ControlPanel(QWidget):
         index = self.time_column_combo.findText(column)
         if index >= 0:
             self.time_column_combo.setCurrentIndex(index)
+            self._sync_auto_targets()
 
     def selected_target_columns(self) -> list[str]:
-        return self.target_selector.selected_columns()
+        return self._auto_target_columns()
 
     def selected_auxiliary_columns(self) -> list[str]:
         return self.auxiliary_selector.selected_columns()
@@ -297,6 +303,7 @@ class ControlPanel(QWidget):
             combo = self.auxiliary_axis_table.cellWidget(row, 1)
             if item is not None and isinstance(combo, QComboBox) and item.text() in axes:
                 combo.setCurrentText(axes[item.text()])
+        self._sync_auto_targets()
 
     def selected_divider_row(self) -> int:
         return self.divider_table.currentRow()
@@ -437,6 +444,7 @@ class ControlPanel(QWidget):
         self.open_button.clicked.connect(self.open_csv_requested)
         self.cancel_task_button.clicked.connect(self.cancel_task_requested)
         self.update_plot_button.clicked.connect(self.update_plot_requested)
+        self.time_column_combo.currentTextChanged.connect(self._time_column_changed)
         self.active_case_combo.currentTextChanged.connect(self.active_case_changed)
         self.threshold_spin.valueChanged.connect(self.threshold_changed)
         self.disable_threshold_button.clicked.connect(self.threshold_disabled_requested)
@@ -456,6 +464,11 @@ class ControlPanel(QWidget):
 
     def _auxiliary_selection_changed(self) -> None:
         self.auxiliary_axis_table.set_auxiliary_columns(self.selected_auxiliary_columns())
+        self._sync_auto_targets()
+        self.column_selection_changed.emit()
+
+    def _time_column_changed(self, _column: str) -> None:
+        self._sync_auto_targets()
         self.column_selection_changed.emit()
 
     def _case_style_item_changed(self, item: QTableWidgetItem) -> None:
@@ -466,6 +479,22 @@ class ControlPanel(QWidget):
         if case_item is None:
             return
         self.case_visibility_changed.emit(case_item.text(), item.checkState() == Qt.CheckState.Checked)
+
+    def _auto_target_columns(self) -> list[str]:
+        time_column = self.selected_time_column()
+        auxiliaries = set(self.selected_auxiliary_columns())
+        return [column for column in self._all_columns if column != time_column and column not in auxiliaries]
+
+    def _sync_auto_targets(self) -> None:
+        targets = self._auto_target_columns()
+        self.target_selector.set_selected_columns(targets)
+        self.set_active_cases(targets)
+        self.set_case_styles(
+            targets,
+            colors=self.case_style_table.colors(),
+            visibility=self.case_style_table.visibility(),
+            units={},
+        )
 
 
 def _format_optional(value: float | None) -> str:

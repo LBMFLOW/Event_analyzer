@@ -709,6 +709,7 @@ class MainWindowController:
             time_column=time_column,
             target_columns=target_columns,
             auxiliary_columns=auxiliary_columns,
+            ignore_invalid_targets=True,
             cancel_token=cancel_token,
             progress_callback=progress_callback,
         )

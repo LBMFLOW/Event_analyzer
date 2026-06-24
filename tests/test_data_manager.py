@@ -103,22 +103,42 @@ class DataManagerTests(unittest.TestCase):
             with self.assertRaises(EmptyDataError):
                 manager.select_columns(time_column="time_s", target_columns=["case_alpha"])
 
-    def test_too_many_invalid_values_has_clear_error(self) -> None:
+    def test_ragged_target_columns_are_loaded_as_nan_gaps(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "invalid_values.csv"
+            path = Path(temp_dir) / "ragged_target.csv"
             with path.open("w", newline="", encoding="utf-8") as handle:
                 writer = csv.writer(handle)
-                writer.writerow(["time_s", "mostly_missing"])
+                writer.writerow(["time_s", "ends_early"])
                 for index in range(10):
                     writer.writerow([index, index if index < 2 else ""])
 
             manager = DataManager(preview_rows=10, min_numeric_valid_ratio=0.8)
             manager.open_csv(path)
+            loaded = manager.select_columns(time_column="time_s", target_columns=["ends_early"])
+
+            self.assertEqual(loaded.row_count, 10)
+            self.assertTrue(loaded.targets["ends_early"][2] != loaded.targets["ends_early"][2])
+            self.assertTrue(loaded.warnings)
+
+    def test_too_many_invalid_auxiliary_values_has_clear_error(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "invalid_aux_values.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["time_s", "case_a", "mostly_missing_aux"])
+                for index in range(10):
+                    writer.writerow([index, index, index if index < 2 else ""])
+
+            manager = DataManager(preview_rows=1, min_numeric_valid_ratio=0.8)
+            manager.open_csv(path)
 
             with self.assertRaises(TooManyInvalidValuesError):
-                manager.select_columns(time_column="time_s", target_columns=["mostly_missing"])
+                manager.select_columns(
+                    time_column="time_s",
+                    target_columns=["case_a"],
+                    auxiliary_columns=["mostly_missing_aux"],
+                )
 
 
 if __name__ == "__main__":
     unittest.main()
-

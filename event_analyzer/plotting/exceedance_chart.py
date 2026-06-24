@@ -5,10 +5,12 @@ from collections import defaultdict
 from pathlib import Path
 
 import numpy as np
+import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from event_analyzer.analysis.exceedance import ExceedanceEvent
+from event_analyzer.plotting.colors import color_for_index
 
 try:  # Matplotlib is part of the normal app requirements, but keep imports graceful.
     from matplotlib import colormaps
@@ -26,10 +28,10 @@ except Exception:  # pragma: no cover - exercised only in partial installations.
 class ExceedanceBarChartWidget(QWidget):
     """Grouped bar chart for contiguous threshold exceedance durations.
 
-    The widget is Matplotlib-backed rather than PyQtGraph-backed because grouped
-    categorical bars, labels, click picking, and SVG export are more reliable in
-    Matplotlib. For many cases the canvas grows horizontally inside a scroll
-    area, keeping labels readable instead of compressing all cases into one view.
+    Matplotlib is used when available because grouped categorical bars, labels,
+    click picking, and SVG export are more reliable there. A PyQtGraph fallback
+    renders the same grouped bars in partial installations so the UI never shows
+    only a placeholder for valid exceedance events.
     """
 
     event_selected = pyqtSignal(str, int, float, float, float, float)
@@ -48,7 +50,7 @@ class ExceedanceBarChartWidget(QWidget):
         self.show_value_labels = show_value_labels
         self.value_label_limit = value_label_limit
         self.figure = Figure(figsize=(9, 3.8), tight_layout=True) if MATPLOTLIB_AVAILABLE else None
-        self.canvas = FigureCanvasQTAgg(self.figure) if MATPLOTLIB_AVAILABLE else QLabel("Matplotlib is not installed.")
+        self.canvas = FigureCanvasQTAgg(self.figure) if MATPLOTLIB_AVAILABLE else pg.PlotWidget()
         self.canvas.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(False)
@@ -57,6 +59,7 @@ class ExceedanceBarChartWidget(QWidget):
         self.status_label.setWordWrap(True)
         self._events: list[ExceedanceEvent] = []
         self._patch_events: dict[object, ExceedanceEvent] = {}
+        self._fallback_bar_bounds: list[tuple[float, float, float, ExceedanceEvent]] = []
         self._plot_adapter = None
 
         layout = QVBoxLayout(self)
@@ -66,6 +69,9 @@ class ExceedanceBarChartWidget(QWidget):
 
         if MATPLOTLIB_AVAILABLE:
             self.canvas.mpl_connect("pick_event", self._bar_picked)
+        elif isinstance(self.canvas, pg.PlotWidget):
+            self._configure_fallback_plot()
+            self.canvas.scene().sigMouseClicked.connect(self._fallback_mouse_clicked)
         self.set_events([])
 
     @property
@@ -85,12 +91,9 @@ class ExceedanceBarChartWidget(QWidget):
         """Render grouped duration bars from exceedance events."""
         self._events = sorted(events, key=lambda event: (event.case_name, event.event_index, event.start_time))
         self._patch_events.clear()
+        self._fallback_bar_bounds.clear()
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
-            self.status_label.setText(
-                f"{len(self._events)} exceedance event(s). Install matplotlib for the grouped bar chart view."
-            )
-            if isinstance(self.canvas, QLabel):
-                self.canvas.setText("Grouped exceedance chart requires matplotlib.")
+            self._render_pyqtgraph_fallback()
             return
         self.figure.clear()
         axis = self.figure.add_subplot(111)
@@ -226,6 +229,9 @@ class ExceedanceBarChartWidget(QWidget):
         event = self._patch_events.get(pick_event.artist)
         if event is None:
             return
+        self._select_event(event)
+
+    def _select_event(self, event: ExceedanceEvent) -> None:
         self.status_label.setText(
             f"Selected {event.case_name} event {event.event_index}: "
             f"{_format_number(event.duration)} {self.time_unit}, peak {_format_number(event.peak_value)}"
@@ -242,6 +248,117 @@ class ExceedanceBarChartWidget(QWidget):
         if self._plot_adapter is not None and hasattr(self._plot_adapter, "set_slider_time"):
             self._plot_adapter.set_slider_time(event.peak_time)
 
+    def _configure_fallback_plot(self) -> None:
+        if not isinstance(self.canvas, pg.PlotWidget):
+            return
+        self.canvas.setBackground("w")
+        self.canvas.showGrid(x=True, y=True, alpha=0.25)
+        self.canvas.plotItem.setMenuEnabled(False)
+
+    def _render_pyqtgraph_fallback(self) -> None:
+        if not isinstance(self.canvas, pg.PlotWidget):
+            return
+        plot_item = self.canvas.plotItem
+        plot_item.clear()
+        self._configure_fallback_plot()
+        plot_item.setTitle("Exceedance durations by case")
+        plot_item.setLabel("bottom", "Case")
+        plot_item.setLabel("left", f"Duration above threshold ({self.time_unit})")
+
+        if not self._events:
+            self._set_fallback_canvas_width(case_count=1)
+            plot_item.getAxis("bottom").setTicks([[]])
+            plot_item.setXRange(-0.5, 0.5, padding=0)
+            plot_item.setYRange(0, 1, padding=0)
+            label = pg.TextItem("No exceedance events", color="#52525b", anchor=(0.5, 0.5))
+            plot_item.addItem(label)
+            label.setPos(0.0, 0.5)
+            self.status_label.setText("No exceedance events")
+            return
+
+        grouped = _group_events_by_case(self._events)
+        cases = list(grouped)
+        max_events_for_case = max(len(case_events) for case_events in grouped.values())
+        x_positions = np.arange(len(cases), dtype=float)
+        width = min(0.82 / max_events_for_case, 0.24)
+        total_bars = len(self._events)
+        show_labels = self.show_value_labels and total_bars <= self.value_label_limit
+
+        self._set_fallback_canvas_width(case_count=len(cases))
+
+        for event_slot in range(max_events_for_case):
+            x_values: list[float] = []
+            heights: list[float] = []
+            slot_events: list[ExceedanceEvent] = []
+            offset = (event_slot - (max_events_for_case - 1) / 2) * width
+            for case_index, case in enumerate(cases):
+                case_events = grouped[case]
+                if event_slot >= len(case_events):
+                    continue
+                event = case_events[event_slot]
+                x_value = float(x_positions[case_index] + offset)
+                x_values.append(x_value)
+                heights.append(float(event.duration))
+                slot_events.append(event)
+                self._fallback_bar_bounds.append((x_value, width, float(event.duration), event))
+                self._patch_events[(event.case_name, event.event_index, event.start_time)] = event
+
+            if not slot_events:
+                continue
+            bar_item = pg.BarGraphItem(
+                x=x_values,
+                height=heights,
+                width=width * 0.9,
+                brush=pg.mkBrush(color_for_index(event_slot)),
+                pen=pg.mkPen("#3f3f46", width=0.7),
+            )
+            plot_item.addItem(bar_item)
+
+            if show_labels:
+                for x_value, height in zip(x_values, heights):
+                    label = pg.TextItem(_format_number(height), color="#111827", anchor=(0.5, 1))
+                    plot_item.addItem(label)
+                    label.setPos(x_value, height)
+
+        bottom_axis = plot_item.getAxis("bottom")
+        bottom_axis.setTicks([[(float(position), _short_case_label(case)) for position, case in zip(x_positions, cases)]])
+        try:
+            bottom_axis.setStyle(tickTextAngle=_label_rotation(len(cases)))
+        except (NameError, TypeError):
+            pass
+        bottom_axis.setHeight(90 if len(cases) > 8 else 62)
+
+        max_duration = max((event.duration for event in self._events), default=1.0)
+        y_max = max(1.0, max_duration * 1.15)
+        plot_item.setXRange(-0.75, len(cases) - 0.25, padding=0)
+        plot_item.setYRange(0, y_max, padding=0)
+        self.status_label.setText(
+            f"{len(self._events)} events across {len(cases)} cases. "
+            "Click a bar to select its event and move the plot tracer to peak time."
+        )
+
+    def _fallback_mouse_clicked(self, mouse_event) -> None:
+        if not isinstance(self.canvas, pg.PlotWidget):
+            return
+        if mouse_event.button() != Qt.MouseButton.LeftButton:
+            return
+        view_box = self.canvas.plotItem.vb
+        if not view_box.sceneBoundingRect().contains(mouse_event.scenePos()):
+            return
+        point = view_box.mapSceneToView(mouse_event.scenePos())
+        x_value = float(point.x())
+        y_value = float(point.y())
+        candidates = [
+            (abs(x_value - x_center), event)
+            for x_center, width, height, event in self._fallback_bar_bounds
+            if x_center - width / 2 <= x_value <= x_center + width / 2 and 0 <= y_value <= height
+        ]
+        if not candidates:
+            return
+        _distance, event = min(candidates, key=lambda item: item[0])
+        self._select_event(event)
+        mouse_event.accept()
+
     def _set_canvas_width(self, *, case_count: int) -> None:
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
             return
@@ -250,6 +367,12 @@ class ExceedanceBarChartWidget(QWidget):
         self.figure.set_size_inches(width_inches, height_inches, forward=True)
         dpi = self.figure.dpi
         self.canvas.setMinimumSize(int(width_inches * dpi), int(height_inches * dpi))
+
+    def _set_fallback_canvas_width(self, *, case_count: int) -> None:
+        if not isinstance(self.canvas, pg.PlotWidget):
+            return
+        width = max(900, min(12000, int(58 * max(1, case_count) + 260)))
+        self.canvas.setMinimumSize(width, 380)
 
 
 def _group_events_by_case(events: list[ExceedanceEvent]) -> dict[str, list[ExceedanceEvent]]:
@@ -269,6 +392,12 @@ def _label_rotation(case_count: int) -> int:
     return 60
 
 
+def _short_case_label(case_name: str, *, max_length: int = 24) -> str:
+    if len(case_name) <= max_length:
+        return case_name
+    return f"{case_name[: max_length - 1]}..."
+
+
 def _format_number(value: float) -> str:
     if not np.isfinite(value):
         return "-"
@@ -276,24 +405,67 @@ def _format_number(value: float) -> str:
 
 
 def _export_fallback_svg(events: list[ExceedanceEvent], path: str | Path) -> None:
+    grouped = _group_events_by_case(events)
+    cases = list(grouped)
+    max_events_for_case = max((len(case_events) for case_events in grouped.values()), default=1)
+    width = max(900, min(12000, int(62 * max(1, len(cases)) + 260)))
+    height = 420
+    plot_x = 78
+    plot_y = 54
+    plot_width = width - 130
+    plot_height = 250
+    max_duration = max((event.duration for event in events), default=1.0)
     lines = [
-        '<svg xmlns="http://www.w3.org/2000/svg" width="900" height="300" viewBox="0 0 900 300">',
-        '<rect width="900" height="300" fill="white"/>',
-        '<text x="24" y="36" font-family="Arial" font-size="20">Exceedance durations</text>',
-        '<text x="24" y="66" font-family="Arial" font-size="13">Install matplotlib for the grouped bar chart rendering.</text>',
-        f'<text x="24" y="96" font-family="Arial" font-size="13">Events: {len(events)}</text>',
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
+        f'<rect width="{width}" height="{height}" fill="white"/>',
+        '<text x="24" y="32" font-family="Arial" font-size="20">Exceedance durations by case</text>',
+        f'<text x="24" y="52" font-family="Arial" font-size="12">Events: {len(events)}</text>',
+        f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
+        f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
+        f'<text x="{plot_x + plot_width / 2:.1f}" y="{height - 18}" font-family="Arial" font-size="13" text-anchor="middle">Case</text>',
+        f'<text x="18" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="13" transform="rotate(-90 18 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
     ]
-    for index, event in enumerate(events[:8], start=1):
-        y = 100 + index * 22
+    if not events:
         lines.append(
-            '<text x="24" y="{y}" font-family="Arial" font-size="12">'
-            "{case} event {event_index}: duration {duration}</text>".format(
-                y=y,
-                case=_xml_escape(event.case_name),
-                event_index=event.event_index,
-                duration=_format_number(event.duration),
-            )
+            f'<text x="{plot_x + plot_width / 2:.1f}" y="{plot_y + plot_height / 2:.1f}" '
+            'font-family="Arial" font-size="14" text-anchor="middle">No exceedance events</text>'
         )
+    else:
+        case_width = plot_width / max(1, len(cases))
+        bar_width = min(26.0, case_width * 0.78 / max_events_for_case)
+        for event_slot in range(max_events_for_case):
+            color = color_for_index(event_slot)
+            for case_index, case in enumerate(cases):
+                case_events = grouped[case]
+                if event_slot >= len(case_events):
+                    continue
+                event = case_events[event_slot]
+                center = plot_x + case_width * (case_index + 0.5)
+                offset = (event_slot - (max_events_for_case - 1) / 2) * bar_width
+                bar_height = (event.duration / max_duration) * plot_height if max_duration > 0 else 0
+                x = center + offset - bar_width * 0.45
+                y = plot_y + plot_height - bar_height
+                lines.append(
+                    f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width * 0.9:.1f}" height="{bar_height:.1f}" '
+                    f'fill="{color}" stroke="#3f3f46" stroke-width="0.5"/>'
+                )
+        label_step = max(1, len(cases) // 40)
+        for case_index, case in enumerate(cases):
+            if case_index % label_step != 0:
+                continue
+            x = plot_x + case_width * (case_index + 0.5)
+            label = _xml_escape(_short_case_label(case, max_length=18))
+            lines.append(
+                f'<text x="{x:.1f}" y="{plot_y + plot_height + 18}" font-family="Arial" font-size="10" '
+                f'text-anchor="end" transform="rotate(-45 {x:.1f} {plot_y + plot_height + 18})">{label}</text>'
+            )
+        for event_slot in range(min(max_events_for_case, 8)):
+            x = plot_x + 12 + event_slot * 86
+            y = plot_y - 24
+            lines.append(f'<rect x="{x}" y="{y - 10}" width="12" height="12" fill="{color_for_index(event_slot)}"/>')
+            lines.append(
+                f'<text x="{x + 16}" y="{y}" font-family="Arial" font-size="11">Event {event_slot + 1}</text>'
+            )
     lines.append("</svg>")
     Path(path).write_text("\n".join(lines), encoding="utf-8")
 

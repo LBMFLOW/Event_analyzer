@@ -45,9 +45,7 @@ class CsvPreviewTable(QTableWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, 0, parent)
-        self.setAlternatingRowColors(True)
-        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        _configure_resizable_table(self)
 
     def set_preview(self, headers: list[str], rows: list[dict[str, object]]) -> None:
         self.setColumnCount(len(headers))
@@ -67,9 +65,7 @@ class ExceedanceSummaryTable(QTableWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
         self.setHorizontalHeaderLabels(self.HEADERS)
-        self.setAlternatingRowColors(True)
-        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        _configure_resizable_table(self)
 
     def set_events(self, events: list[ExceedanceEvent]) -> None:
         self.setRowCount(len(events))
@@ -118,9 +114,7 @@ class RegionStatisticsTable(QTableWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(0, len(self.HEADERS), parent)
         self.setHorizontalHeaderLabels(self.HEADERS)
-        self.setAlternatingRowColors(True)
-        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        _configure_resizable_table(self)
 
     def set_statistics(self, rows: list[dict[str, object]]) -> None:
         self.setRowCount(len(rows))
@@ -168,3 +162,15 @@ def _format_value(value: object) -> str:
     if isinstance(value, float):
         return _format_float(value)
     return str(value)
+
+
+def _configure_resizable_table(table: QTableWidget) -> None:
+    table.setAlternatingRowColors(True)
+    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    table.setHorizontalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+    table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    header = table.horizontalHeader()
+    header.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+    header.setStretchLastSection(False)
+    header.setMinimumSectionSize(45)
+    header.setDefaultSectionSize(145)

@@ -2,24 +2,30 @@ from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-import tempfile
+import os
 import unittest
 
-MATPLOTLIB_AVAILABLE = importlib.util.find_spec("matplotlib") is not None
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 PYQT_AVAILABLE = importlib.util.find_spec("PyQt6") is not None
 
-if MATPLOTLIB_AVAILABLE and PYQT_AVAILABLE:
+if PYQT_AVAILABLE:
     from PyQt6.QtWidgets import QApplication
 
     from event_analyzer.analysis.exceedance import ExceedanceEvent
     from event_analyzer.plotting.exceedance_chart import ExceedanceBarChartWidget
 
 
-@unittest.skipUnless(MATPLOTLIB_AVAILABLE and PYQT_AVAILABLE, "PyQt6 and matplotlib are required")
+@unittest.skipUnless(PYQT_AVAILABLE, "PyQt6 is required")
 class ExceedanceBarChartWidgetTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         cls.app = QApplication.instance() or QApplication([])
+
+    def tearDown(self) -> None:
+        for path in Path.cwd().glob("test_exceedance_chart_*"):
+            if path.is_file():
+                path.unlink()
 
     def test_set_events_and_export_csv(self) -> None:
         widget = ExceedanceBarChartWidget()
@@ -33,15 +39,23 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
 
         self.assertEqual(len(widget.events), 3)
         self.assertEqual(len(widget._patch_events), 3)
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "events.csv"
-            widget.export_csv(path)
-            text = path.read_text(encoding="utf-8")
+        path = Path.cwd() / "test_exceedance_chart_events.csv"
+        widget.export_csv(path)
+        text = path.read_text(encoding="utf-8")
 
         self.assertIn("case_name,event_index,start_time", text)
         self.assertIn("case_a,1,0.5,2.5,2.0,3.0,1.0,1.0,0.0,4.0", text)
 
+    def test_export_svg_without_crashing(self) -> None:
+        widget = ExceedanceBarChartWidget()
+        widget.set_events([ExceedanceEvent("case_a", 1, 0.0, 1.0, 1.0, 2.0, 0.5, 1.0, 0.0, 2.0)])
+
+        path = Path.cwd() / "test_exceedance_chart.svg"
+        widget.export_svg(path)
+
+        self.assertTrue(path.exists())
+        self.assertIn("<svg", path.read_text(encoding="utf-8", errors="ignore").lower())
+
 
 if __name__ == "__main__":
     unittest.main()
-

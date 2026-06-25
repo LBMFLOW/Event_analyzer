@@ -18,6 +18,11 @@ class SessionState:
     plot_title: str = "Time-series plot"
     x_axis_title: str = ""
     y_axis_title: str = ""
+    main_time_range: tuple[float, float] | None = None
+    main_target_range: tuple[float, float] | None = None
+    chart_y_range: tuple[float, float] | None = None
+    chart_axis_title_font_size: int = 14
+    chart_tick_label_font_size: int = 12
     dividers: list[dict[str, object]] = field(default_factory=list)
     threshold: float | None = None
     region: tuple[float, float] | None = None
@@ -33,9 +38,10 @@ class SessionState:
     @classmethod
     def load(cls, path: str | Path) -> "SessionState":
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        region = data.get("region")
-        if region is not None:
-            data["region"] = (float(region[0]), float(region[1]))
+        for key in ("region", "main_time_range", "main_target_range", "chart_y_range"):
+            value = data.get(key)
+            if value is not None:
+                data[key] = (float(value[0]), float(value[1]))
         if data.get("dividers") and isinstance(data["dividers"][0], (int, float)):
             data["dividers"] = [{"time": float(value)} for value in data["dividers"]]
         allowed = {item.name for item in fields(cls)}

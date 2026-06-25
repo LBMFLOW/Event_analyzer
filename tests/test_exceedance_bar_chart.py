@@ -81,6 +81,20 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertEqual(len(widget.events), 18)
         self.assertIn("events across", widget.status_label.text())
 
+    def test_chart_y_range_and_font_sizes_apply_to_matplotlib_axis(self) -> None:
+        widget = ExceedanceBarChartWidget()
+        widget.set_y_range((0.0, 10.0))
+        widget.set_font_sizes(axis_title_font_size=20, tick_label_font_size=16)
+        widget.set_events([ExceedanceEvent("case_a", 1, 0.0, 2.0, 4.0, 5.0, 1.0, 3.0, 0.0, 4.0)])
+
+        if widget.figure is not None:
+            axis = widget.figure.axes[0]
+            self.assertEqual(axis.get_ylim(), (0.0, 10.0))
+            self.assertEqual(axis.xaxis.label.get_size(), 20)
+            self.assertEqual(axis.yaxis.label.get_size(), 20)
+            self.assertTrue(all(label.get_size() == 16 for label in axis.get_yticklabels()))
+        widget.close()
+
     def test_fallback_case_labels_are_rotated_below_axis(self) -> None:
         events = [
             ExceedanceEvent("Cell voltage - delta_OCV 2 001", 1, 0.0, 2.0, 2.0, 5.0, 1.0, 3.0, 0.0, 4.0),
@@ -138,7 +152,7 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         legend_match = re.search(r'<rect x="128" y="([\d.]+)" width="16" height="16"', text)
         plot_match = re.search(r'<rect x="128" y="([\d.]+)" width="[^"]+" height="440"', text)
         x_label_match = re.search(
-            r'<text x="[\d.]+" y="([\d.]+)" font-family="Arial" font-size="18" text-anchor="middle">Case</text>',
+            r'<text x="[\d.]+" y="([\d.]+)" font-family="Arial" font-size="\d+" text-anchor="middle">Case</text>',
             text,
         )
         self.assertIsNotNone(region_match)
@@ -189,6 +203,22 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         width = int(re.search(r'width="(\d+)"', text).group(1))
         self.assertGreater(width, 900)
         self.assertLessEqual(width, 2200)
+
+    def test_fallback_svg_respects_y_range_and_axis_font_sizes(self) -> None:
+        events = [ExceedanceEvent("case_a", 1, 0.0, 2.0, 4.0, 5.0, 1.0, 3.0, 0.0, 4.0)]
+        path = Path.cwd() / "test_exceedance_chart_y_range_fonts.svg"
+
+        _export_fallback_svg(
+            events,
+            path,
+            y_range=(0.0, 20.0),
+            axis_title_font_size=24,
+            tick_label_font_size=16,
+        )
+        text = path.read_text(encoding="utf-8")
+
+        self.assertIn('font-size="24" text-anchor="middle">Case</text>', text)
+        self.assertIn('font-size="16" text-anchor="end">20</text>', text)
 
 
 if __name__ == "__main__":

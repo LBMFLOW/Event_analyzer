@@ -8,6 +8,7 @@ import textwrap
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from event_analyzer.analysis.exceedance import ExceedanceEvent
@@ -64,6 +65,9 @@ class ExceedanceBarChartWidget(QWidget):
         self._fallback_case_labels: list[pg.TextItem] = []
         self._case_display_labels: dict[str, str] = {}
         self._region_name = ""
+        self._y_range: tuple[float, float] | None = None
+        self._axis_title_font_size = 14
+        self._tick_label_font_size = 12
         self._plot_adapter = None
 
         layout = QVBoxLayout(self)
@@ -101,6 +105,17 @@ class ExceedanceBarChartWidget(QWidget):
         self._region_name = str(name or "").strip()
         self.set_events(self._events)
 
+    def set_y_range(self, value_range: tuple[float, float] | None) -> None:
+        """Set an optional manual y-axis range for the duration chart."""
+        self._y_range = _validate_optional_range(value_range, "chart y range")
+        self.set_events(self._events)
+
+    def set_font_sizes(self, *, axis_title_font_size: int, tick_label_font_size: int) -> None:
+        """Set axis title and tick-label font sizes for the chart and SVG export."""
+        self._axis_title_font_size = int(max(6, min(72, axis_title_font_size)))
+        self._tick_label_font_size = int(max(6, min(72, tick_label_font_size)))
+        self.set_events(self._events)
+
     def set_events(self, events: list[ExceedanceEvent]) -> None:
         """Render grouped duration bars from exceedance events."""
         self._events = sorted(events, key=lambda event: (event.case_name, event.event_index, event.start_time))
@@ -118,8 +133,9 @@ class ExceedanceBarChartWidget(QWidget):
             self.figure.suptitle("Exceedance durations", fontsize=18, y=0.96)
             if self._region_name:
                 self.figure.text(0.085, 0.90, f"Region: {self._region_name}", fontsize=11, color="#111827")
-            axis.set_xlabel("Case", fontsize=14, labelpad=1)
-            axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
+            axis.set_xlabel("Case", fontsize=self._axis_title_font_size, labelpad=1)
+            axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=self._axis_title_font_size)
+            axis.set_ylim(*_resolve_y_range(1.0, self._y_range))
             axis.text(
                 0.5,
                 0.5,
@@ -129,7 +145,7 @@ class ExceedanceBarChartWidget(QWidget):
                 va="center",
                 fontsize=13,
             )
-            axis.tick_params(axis="both", labelsize=12)
+            axis.tick_params(axis="both", labelsize=self._tick_label_font_size)
             axis.grid(axis="y", alpha=0.25)
             self.figure.set_tight_layout(False)
             self.figure.subplots_adjust(left=0.085, right=0.985, top=0.78 if self._region_name else 0.82, bottom=0.18)
@@ -183,13 +199,13 @@ class ExceedanceBarChartWidget(QWidget):
                         fontsize=11,
                     )
 
-        axis.set_ylim(0, max(1.0, max((event.duration for event in self._events), default=1.0) * 1.16))
+        axis.set_ylim(*_resolve_y_range(max((event.duration for event in self._events), default=1.0) * 1.16, self._y_range))
         self.figure.suptitle("Exceedance durations by case", fontsize=18, y=0.975)
         self.figure.text(0.075, 0.925, f"Events: {len(self._events)}", fontsize=11, color="#111827")
         if self._region_name:
             self.figure.text(0.075, 0.895, f"Region: {self._region_name}", fontsize=11, color="#111827")
-        axis.set_xlabel("Case", fontsize=14, labelpad=1)
-        axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
+        axis.set_xlabel("Case", fontsize=self._axis_title_font_size, labelpad=1)
+        axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=self._axis_title_font_size)
         axis.set_xticks(x_positions)
         axis.set_xticklabels(
             [
@@ -199,9 +215,9 @@ class ExceedanceBarChartWidget(QWidget):
             rotation=52,
             ha="right",
             rotation_mode="anchor",
-            fontsize=_axis_label_font_size(len(cases)),
+            fontsize=self._tick_label_font_size,
         )
-        axis.tick_params(axis="y", labelsize=12)
+        axis.tick_params(axis="y", labelsize=self._tick_label_font_size)
         axis.grid(axis="y", alpha=0.25)
         axis.margins(x=0.02)
         self.figure.set_tight_layout(False)
@@ -245,6 +261,9 @@ class ExceedanceBarChartWidget(QWidget):
                 path,
                 case_display_labels=self._case_display_labels,
                 region_name=self._region_name,
+                y_range=self._y_range,
+                axis_title_font_size=self._axis_title_font_size,
+                tick_label_font_size=self._tick_label_font_size,
             )
             return
         self.figure.savefig(path, format="svg", bbox_inches="tight", pad_inches=0.12)
@@ -323,17 +342,23 @@ class ExceedanceBarChartWidget(QWidget):
         if self._region_name:
             title = f"{title}<br><span style='font-size:10pt'>Region: {_html_escape(self._region_name)}</span>"
         plot_item.setTitle(title)
-        plot_item.setLabel("bottom", "Case")
-        plot_item.setLabel("left", f"Duration above threshold ({self.time_unit})")
+        label_style = {"font-size": f"{self._axis_title_font_size}pt"}
+        tick_font = QFont()
+        tick_font.setPointSize(self._tick_label_font_size)
+        plot_item.setLabel("bottom", "Case", **label_style)
+        plot_item.setLabel("left", f"Duration above threshold ({self.time_unit})", **label_style)
+        plot_item.getAxis("bottom").setStyle(tickFont=tick_font)
+        plot_item.getAxis("left").setStyle(tickFont=tick_font)
 
         if not self._events:
             self._set_fallback_canvas_width(case_count=1)
             plot_item.getAxis("bottom").setTicks([[]])
             plot_item.setXRange(-0.5, 0.5, padding=0)
-            plot_item.setYRange(0, 1, padding=0)
+            plot_item.setYRange(*_resolve_y_range(1.0, self._y_range), padding=0)
             label = pg.TextItem("No exceedance events", color="#52525b", anchor=(0.5, 0.5))
             plot_item.addItem(label)
-            label.setPos(0.0, 0.5)
+            y_min, y_max = _resolve_y_range(1.0, self._y_range)
+            label.setPos(0.0, y_min + (y_max - y_min) * 0.5)
             self.status_label.setText("No exceedance events")
             return
 
@@ -382,14 +407,15 @@ class ExceedanceBarChartWidget(QWidget):
                     label.setPos(x_value, height)
 
         max_duration = max((event.duration for event in self._events), default=1.0)
-        y_max = max(1.0, max_duration * 1.15)
-        label_space = y_max * _fallback_label_space_fraction(len(cases))
+        y_min, y_max = _resolve_y_range(max_duration * 1.15, self._y_range)
+        y_span = max(abs(y_max - y_min), 1.0)
+        label_space = y_span * _fallback_label_space_fraction(len(cases))
         bottom_axis = plot_item.getAxis("bottom")
         bottom_axis.setTicks([[(float(position), "") for position in x_positions]])
         bottom_axis.setHeight(_fallback_axis_height(len(cases)))
-        self._add_fallback_case_labels(plot_item, cases, x_positions, label_y=-label_space * 0.08)
+        self._add_fallback_case_labels(plot_item, cases, x_positions, label_y=y_min - label_space * 0.08)
         plot_item.setXRange(-0.75, len(cases) - 0.25, padding=0)
-        plot_item.setYRange(-label_space, y_max, padding=0)
+        plot_item.setYRange(y_min - label_space, y_max, padding=0)
         self.status_label.setText(
             f"{len(self._events)} events across {len(cases)} cases. "
             "Click a bar to select its event and move the plot tracer to peak time."
@@ -404,6 +430,9 @@ class ExceedanceBarChartWidget(QWidget):
                 color="#71717a",
                 anchor=(1, 0),
             )
+            font = QFont()
+            font.setPointSize(self._tick_label_font_size)
+            label.setFont(font)
             try:
                 label.setAngle(angle)
             except AttributeError:
@@ -466,6 +495,21 @@ def _group_events_by_case(events: list[ExceedanceEvent]) -> dict[str, list[Excee
     return dict(sorted(grouped.items(), key=lambda item: item[0]))
 
 
+def _validate_optional_range(value_range: tuple[float, float] | None, name: str) -> tuple[float, float] | None:
+    if value_range is None:
+        return None
+    start, end = float(value_range[0]), float(value_range[1])
+    if not np.isfinite(start) or not np.isfinite(end) or start >= end:
+        raise ValueError(f"{name} must contain finite values with minimum less than maximum.")
+    return start, end
+
+
+def _resolve_y_range(auto_max: float, manual_range: tuple[float, float] | None) -> tuple[float, float]:
+    if manual_range is not None:
+        return manual_range
+    return 0.0, max(1.0, float(auto_max))
+
+
 def _label_rotation(case_count: int) -> int:
     if case_count <= 6:
         return 35
@@ -480,14 +524,6 @@ def _axis_label_length(case_count: int) -> int:
     if case_count <= 25:
         return 20
     return 14
-
-
-def _axis_label_font_size(case_count: int) -> int:
-    if case_count <= 12:
-        return 12
-    if case_count <= 45:
-        return 11
-    return 10
 
 
 def _matplotlib_label_line_length(case_count: int) -> int:
@@ -605,12 +641,19 @@ def _format_number(value: float) -> str:
     return f"{value:.4g}"
 
 
+def _svg_y_for_value(value: float, *, y_min: float, y_span: float, plot_y: float, plot_height: float) -> float:
+    return plot_y + plot_height - ((value - y_min) / y_span) * plot_height
+
+
 def _export_fallback_svg(
     events: list[ExceedanceEvent],
     path: str | Path,
     *,
     case_display_labels: dict[str, str] | None = None,
     region_name: str = "",
+    y_range: tuple[float, float] | None = None,
+    axis_title_font_size: int = 18,
+    tick_label_font_size: int = 14,
 ) -> None:
     grouped = _group_events_by_case(events)
     cases = list(grouped)
@@ -641,9 +684,9 @@ def _export_fallback_svg(
     plot_x = left_margin
     plot_y = top_margin
     max_duration = max((event.duration for event in events), default=1.0)
-    y_scale_max = max(1.0, max_duration * 1.2)
+    y_min, y_max = _resolve_y_range(max_duration * 1.2, _validate_optional_range(y_range, "chart y range"))
+    y_span = max(abs(y_max - y_min), 1.0)
     legend_x = plot_x
-    x_label_font_size = 14 if case_count <= 45 else 13
     value_font_size = 14 if case_count <= 45 else 13
     x_axis_label_y = plot_y + plot_height + bottom_margin - 22
     lines = [
@@ -659,19 +702,19 @@ def _export_fallback_svg(
             f'<rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d4d4d8" stroke-width="0.7"/>',
             f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
             f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
-            f'<text x="{plot_x + plot_width / 2:.1f}" y="{x_axis_label_y:.1f}" font-family="Arial" font-size="18" text-anchor="middle">Case</text>',
-            f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="18" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
+            f'<text x="{plot_x + plot_width / 2:.1f}" y="{x_axis_label_y:.1f}" font-family="Arial" font-size="{axis_title_font_size}" text-anchor="middle">Case</text>',
+            f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="{axis_title_font_size}" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
         ]
     )
     for tick_index in range(5):
-        value = y_scale_max * tick_index / 4
-        y = plot_y + plot_height - (value / y_scale_max) * plot_height
+        value = y_min + y_span * tick_index / 4
+        y = _svg_y_for_value(value, y_min=y_min, y_span=y_span, plot_y=plot_y, plot_height=plot_height)
         lines.append(
             f'<line x1="{plot_x}" y1="{y:.1f}" x2="{plot_x + plot_width}" y2="{y:.1f}" '
             'stroke="#e4e4e7" stroke-width="0.6"/>'
         )
         lines.append(
-            f'<text x="{plot_x - 10}" y="{y + 5:.1f}" font-family="Arial" font-size="14" '
+            f'<text x="{plot_x - 10}" y="{y + 5:.1f}" font-family="Arial" font-size="{tick_label_font_size}" '
             f'text-anchor="end">{_format_number(value)}</text>'
         )
     if not events:
@@ -691,9 +734,13 @@ def _export_fallback_svg(
                 event = case_events[event_slot]
                 center = plot_x + case_width * (case_index + 0.5)
                 offset = (event_slot - (max_events_for_case - 1) / 2) * bar_width
-                bar_height = (event.duration / y_scale_max) * plot_height if y_scale_max > 0 else 0
+                visible_low = max(y_min, min(0.0, event.duration))
+                visible_high = min(y_max, max(0.0, event.duration))
+                if visible_high <= visible_low:
+                    continue
+                bar_height = ((visible_high - visible_low) / y_span) * plot_height
                 x = center + offset - bar_width * 0.45
-                y = plot_y + plot_height - bar_height
+                y = _svg_y_for_value(visible_high, y_min=y_min, y_span=y_span, plot_y=plot_y, plot_height=plot_height)
                 duration_label = _xml_escape(_format_number(event.duration))
                 lines.append(
                     f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width * 0.9:.1f}" height="{bar_height:.1f}" '
@@ -713,7 +760,7 @@ def _export_fallback_svg(
                     x=x,
                     y=y,
                     lines=wrapped_labels[case],
-                    font_size=x_label_font_size,
+                    font_size=tick_label_font_size,
                     angle=-56,
                 )
             )

@@ -36,6 +36,11 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
             plot_title="My plot",
             x_axis_title="Time (s)",
             y_axis_title="Voltage (V)",
+            main_time_range=(10.0, 20.0),
+            main_target_range=(0.2, 0.8),
+            chart_y_range=(0.0, 100.0),
+            chart_axis_title_font_size=18,
+            chart_tick_label_font_size=16,
             dividers=[{"id": "d1", "time": 1.0}],
             threshold=2.5,
             region=(1.0, 3.0),
@@ -57,6 +62,11 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
         self.assertEqual(restored.plot_title, "My plot")
         self.assertEqual(restored.x_axis_title, "Time (s)")
         self.assertEqual(restored.y_axis_title, "Voltage (V)")
+        self.assertEqual(restored.main_time_range, (10.0, 20.0))
+        self.assertEqual(restored.main_target_range, (0.2, 0.8))
+        self.assertEqual(restored.chart_y_range, (0.0, 100.0))
+        self.assertEqual(restored.chart_axis_title_font_size, 18)
+        self.assertEqual(restored.chart_tick_label_font_size, 16)
         self.assertEqual(restored.dividers[0]["time"], 1.0)
         self.assertEqual(restored.region, (1.0, 3.0))
         self.assertEqual(restored.region_name, "Discharge 1")

@@ -73,6 +73,8 @@ class TimeSeriesPlotWidget(QWidget):
         self._auxiliary_values: dict[str, np.ndarray] = {}
         self._display_threshold: float | None = None
         self._display_region: tuple[float | None, float | None] | None = None
+        self._manual_x_range: tuple[float, float] | None = None
+        self._manual_y1_range: tuple[float, float] | None = None
         self._legend_visible = True
         self._extra_axes: dict[str, pg.AxisItem] = {}
         self._extra_views: dict[str, pg.ViewBox] = {}
@@ -164,6 +166,7 @@ class TimeSeriesPlotWidget(QWidget):
         if self._active_case not in self._target_values:
             self._active_case = next(iter(self._target_values), None)
         self.reset_view()
+        self._apply_view_ranges()
         if self._time.size:
             self.set_slider_time(float(self._time[0]))
 
@@ -346,6 +349,17 @@ class TimeSeriesPlotWidget(QWidget):
             for axis_id, axis in self._extra_axes.items():
                 axis.setLabel(self._extra_axis_labels.get(axis_id, axis_id))
 
+    def set_view_ranges(
+        self,
+        *,
+        x_range: tuple[float, float] | None = None,
+        y1_range: tuple[float, float] | None = None,
+    ) -> None:
+        """Set optional manual ranges for the time axis and target y-axis."""
+        self._manual_x_range = _validate_optional_range(x_range, "x_range")
+        self._manual_y1_range = _validate_optional_range(y1_range, "y1_range")
+        self._apply_view_ranges()
+
     def reset_view(self) -> None:
         """Auto-range all visible axes."""
         self.plotItem.enableAutoRange(axis=pg.ViewBox.XYAxes, enable=True)
@@ -445,6 +459,18 @@ class TimeSeriesPlotWidget(QWidget):
     def view_range(self) -> tuple[tuple[float, float], tuple[float, float]]:
         x_range, y_range = self.plotItem.vb.viewRange()
         return (float(x_range[0]), float(x_range[1])), (float(y_range[0]), float(y_range[1]))
+
+    def _apply_view_ranges(self) -> None:
+        if self._manual_x_range is None:
+            self.plotItem.enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
+        else:
+            self.plotItem.setXRange(*self._manual_x_range, padding=0)
+        if self._manual_y1_range is None:
+            self.plotItem.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        else:
+            self.plotItem.setYRange(*self._manual_y1_range, padding=0)
+        self._update_divider_labels()
+        self._position_trace_axis_labels()
 
     def _configure_plot(self) -> None:
         self.plot_widget.setBackground("w")
@@ -787,6 +813,15 @@ def _axis_number(axis_id: str) -> int:
         return int(axis_id.lower().removeprefix("y"))
     except ValueError:
         return 2
+
+
+def _validate_optional_range(value_range: tuple[float, float] | None, name: str) -> tuple[float, float] | None:
+    if value_range is None:
+        return None
+    start, end = float(value_range[0]), float(value_range[1])
+    if not np.isfinite(start) or not np.isfinite(end) or start >= end:
+        raise ValueError(f"{name} must contain finite values with minimum less than maximum.")
+    return start, end
 
 
 def _interpolate_at(time: np.ndarray, values: np.ndarray, x: float) -> float:

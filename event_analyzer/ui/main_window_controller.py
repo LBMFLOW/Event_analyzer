@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -272,9 +273,11 @@ class MainWindowController:
         plot.set_auxiliary_data(data.auxiliaries, auxiliary_axes, colors=auxiliary_colors)
         plot.set_title(plot_title or "Time-series plot")
         plot.set_axis_labels(x_label=x_label, y1_label=y_label, extra_axis_labels=extra_axis_labels)
+        self._apply_main_plot_ranges(show_errors=False)
         self.window.control_panel.set_plot_axis_placeholders(x_axis=default_x_label, y_axis=default_y_label)
         self.window.workspace.bar_chart.set_case_display_labels(self.case_display_labels)
         self.window.workspace.bar_chart.set_time_unit(self.column_units.get(data.time_column, "") or "time units")
+        self._apply_chart_plot_settings(show_errors=False)
         for name, visible in self.case_visibility.items():
             plot.set_curve_visible(name, visible)
 
@@ -317,9 +320,12 @@ class MainWindowController:
         path = self._choose_save_path("Save project", "event_analyzer_project.json", "Project files (*.json)")
         if not path:
             return
-        state = self._session_state()
         try:
+            state = self._session_state()
             state.save(path)
+        except ValueError as exc:
+            self._warn(str(exc), title="Save project failed")
+            return
         except Exception as exc:
             self._warn(f"Could not save project:\n{exc}", title="Save project failed")
             return
@@ -555,6 +561,7 @@ class MainWindowController:
         )
 
     def apply_plot_settings(self) -> None:
+        self._apply_chart_plot_settings()
         if self.loaded_data is None:
             return
         plot = self.window.workspace.main_plot.plot_widget
@@ -573,6 +580,41 @@ class MainWindowController:
             y1_label=y_axis_title or default_y_label,
             extra_axis_labels=_auxiliary_axis_labels(auxiliary_names, auxiliary_axes, self.column_units),
         )
+        self._apply_main_plot_ranges()
+
+    def _apply_main_plot_ranges(self, *, show_errors: bool = True) -> bool:
+        panel = self.window.control_panel
+        time_min, time_max, target_min, target_max = panel.main_plot_range_texts()
+        try:
+            time_range = _parse_optional_range_texts(time_min, time_max, "main plot time range")
+            target_range = _parse_optional_range_texts(target_min, target_max, "main plot target range")
+            self.window.workspace.main_plot.plot_widget.set_view_ranges(
+                x_range=time_range,
+                y1_range=target_range,
+            )
+        except ValueError as exc:
+            if show_errors:
+                self._warn(str(exc), title="Invalid plot range")
+            return False
+        return True
+
+    def _apply_chart_plot_settings(self, *, show_errors: bool = True) -> bool:
+        panel = self.window.control_panel
+        chart_min, chart_max = panel.chart_y_range_texts()
+        axis_title_font_size, tick_label_font_size = panel.chart_font_sizes()
+        try:
+            chart_y_range = _parse_optional_range_texts(chart_min, chart_max, "exceedance chart y range")
+            chart = self.window.workspace.bar_chart
+            chart.set_y_range(chart_y_range)
+            chart.set_font_sizes(
+                axis_title_font_size=axis_title_font_size,
+                tick_label_font_size=tick_label_font_size,
+            )
+        except ValueError as exc:
+            if show_errors:
+                self._warn(str(exc), title="Invalid chart setting")
+            return False
+        return True
 
     def region_name_changed(self, name: str) -> None:
         selected_key = self._selected_region_tuple()
@@ -726,6 +768,23 @@ class MainWindowController:
             plot_title=self.window.control_panel.plot_settings()[0] or "Time-series plot",
             x_axis_title=self.window.control_panel.plot_settings()[1],
             y_axis_title=self.window.control_panel.plot_settings()[2],
+            main_time_range=_parse_optional_range_texts(
+                self.window.control_panel.main_plot_range_texts()[0],
+                self.window.control_panel.main_plot_range_texts()[1],
+                "main plot time range",
+            ),
+            main_target_range=_parse_optional_range_texts(
+                self.window.control_panel.main_plot_range_texts()[2],
+                self.window.control_panel.main_plot_range_texts()[3],
+                "main plot target range",
+            ),
+            chart_y_range=_parse_optional_range_texts(
+                self.window.control_panel.chart_y_range_texts()[0],
+                self.window.control_panel.chart_y_range_texts()[1],
+                "exceedance chart y range",
+            ),
+            chart_axis_title_font_size=self.window.control_panel.chart_font_sizes()[0],
+            chart_tick_label_font_size=self.window.control_panel.chart_font_sizes()[1],
             dividers=self.divider_manager.serialize(),
             threshold=self.threshold_manager.value,
             region=self._selected_region_tuple(),
@@ -746,6 +805,13 @@ class MainWindowController:
         panel.plot_title_edit.setText(session.plot_title or "Time-series plot")
         panel.x_axis_title_edit.setText(session.x_axis_title)
         panel.y_axis_title_edit.setText(session.y_axis_title)
+        panel.set_main_plot_ranges(time_range=session.main_time_range, target_range=session.main_target_range)
+        panel.set_chart_y_range(session.chart_y_range)
+        panel.set_chart_font_sizes(
+            axis_title_font_size=session.chart_axis_title_font_size,
+            tick_label_font_size=session.chart_tick_label_font_size,
+        )
+        self._apply_chart_plot_settings(show_errors=False)
         panel.set_trace_boxes_visible(session.trace_boxes_visible)
         self.window.workspace.main_plot.plot_widget.set_trace_boxes_visible(session.trace_boxes_visible)
         panel.set_time_column(session.time_column)
@@ -962,6 +1028,25 @@ def _auxiliary_axis_labels(
         else:
             labels[axis_id] = axis_id
     return labels
+
+
+def _parse_optional_range_texts(min_text: str, max_text: str, label: str) -> tuple[float, float] | None:
+    min_text = min_text.strip()
+    max_text = max_text.strip()
+    if not min_text and not max_text:
+        return None
+    if not min_text or not max_text:
+        raise ValueError(f"Enter both minimum and maximum for {label}, or leave both blank for auto range.")
+    try:
+        start = float(min_text)
+        end = float(max_text)
+    except ValueError as exc:
+        raise ValueError(f"{label} must use numeric minimum and maximum values.") from exc
+    if not isfinite(start) or not isfinite(end):
+        raise ValueError(f"{label} must use finite numeric values.")
+    if start >= end:
+        raise ValueError(f"{label} minimum must be less than maximum.")
+    return start, end
 
 
 def _case_display_labels(target_names: list[str], source_columns: dict[str, str]) -> dict[str, str]:

@@ -70,6 +70,19 @@ class TimeSeriesPlotWidgetTests(unittest.TestCase):
         self.assertTrue(widget._trace_y_axis_label.isVisible())
         widget.close()
 
+    def test_manual_view_ranges_can_be_applied(self) -> None:
+        widget = TimeSeriesPlotWidget()
+        widget.set_data([0, 1, 2, 3], {"case_a": [10, 20, 30, 40]})
+
+        widget.set_view_ranges(x_range=(1.0, 2.5), y1_range=(15.0, 35.0))
+
+        x_range, y_range = widget.view_range()
+        self.assertAlmostEqual(x_range[0], 1.0)
+        self.assertAlmostEqual(x_range[1], 2.5)
+        self.assertAlmostEqual(y_range[0], 15.0)
+        self.assertAlmostEqual(y_range[1], 35.0)
+        widget.close()
+
 
 if __name__ == "__main__":
     unittest.main()

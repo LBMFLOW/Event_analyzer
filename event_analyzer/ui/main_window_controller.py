@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -43,7 +44,9 @@ class MainWindowController:
         self.case_colors: dict[str, str] = {}
         self.case_visibility: dict[str, bool] = {}
         self.case_units: dict[str, str] = {}
+        self.case_display_labels: dict[str, str] = {}
         self.column_units: dict[str, str] = {}
+        self.source_columns: dict[str, str] = {}
         self.current_slider_time: float | None = None
         self.divider_manager = DividerManager(allow_outside_range=True)
         self.region_selector: RegionSelector | None = None
@@ -150,6 +153,7 @@ class MainWindowController:
         preview = metadata.get("preview", {})
         layout = dict(metadata.get("layout", {}))
         self.column_units = {str(key): str(value) for key, value in dict(metadata.get("units", {})).items()}
+        self.source_columns = {str(key): str(value) for key, value in dict(metadata.get("source_columns", {})).items()}
 
         self.current_csv_path = path
         self.settings.add_recent_file(path)
@@ -227,6 +231,7 @@ class MainWindowController:
 
         target_names = list(data.targets)
         auxiliary_names = list(data.auxiliaries)
+        self.case_display_labels = _case_display_labels(target_names, getattr(data, "source_columns", {}))
         self.column_units = {
             name: self._unit_for_column(name, data)
             for name in [data.time_column, *target_names, *auxiliary_names]
@@ -263,6 +268,7 @@ class MainWindowController:
         plot.set_title(plot_title or "Time-series plot")
         plot.set_axis_labels(x_label=x_label, y1_label=y_label, extra_axis_labels=extra_axis_labels)
         self.window.control_panel.set_plot_axis_placeholders(x_axis=default_x_label, y_axis=default_y_label)
+        self.window.workspace.bar_chart.set_case_display_labels(self.case_display_labels)
         self.window.workspace.bar_chart.set_time_unit(self.column_units.get(data.time_column, "") or "time units")
         for name, visible in self.case_visibility.items():
             plot.set_curve_visible(name, visible)
@@ -821,6 +827,7 @@ class MainWindowController:
                 "data_start_row": metadata.layout.data_start_row,
             },
             "units": metadata.units,
+            "source_columns": metadata.source_columns,
             "preview": {
                 "headers": metadata.preview.headers,
                 "rows": metadata.preview.rows,
@@ -891,3 +898,15 @@ def _auxiliary_axis_labels(
         else:
             labels[axis_id] = axis_id
     return labels
+
+
+def _case_display_labels(target_names: list[str], source_columns: dict[str, str]) -> dict[str, str]:
+    source_labels = [str(source_columns.get(name, name)).strip() or name for name in target_names]
+    counts = Counter(source_labels)
+    if not any(count > 1 for count in counts.values()):
+        return {}
+    return {
+        name: f"Case# {index}"
+        for index, (name, source_label) in enumerate(zip(target_names, source_labels), start=1)
+        if counts[source_label] > 1
+    }

@@ -142,6 +142,25 @@ class DataManagerTests(unittest.TestCase):
             self.assertTrue(loaded.auxiliaries["ends_early_aux"][2] != loaded.auxiliaries["ends_early_aux"][2])
             self.assertTrue(loaded.warnings)
 
+    def test_duplicate_headers_preserve_source_column_labels(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "duplicate_headers.csv"
+            with path.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.writer(handle)
+                writer.writerow(["time_s", "Cell voltage", "Cell voltage", "Cell voltage"])
+                writer.writerows([[0, 3.1, 3.2, 3.3], [1, 3.4, 3.5, 3.6]])
+
+            manager = DataManager(preview_rows=2)
+            metadata = manager.open_csv(path)
+            loaded = manager.select_columns(
+                time_column="time_s",
+                target_columns=["Cell voltage", "Cell voltage 2", "Cell voltage 3"],
+            )
+
+            self.assertEqual(metadata.source_columns["Cell voltage 2"], "Cell voltage")
+            self.assertEqual(metadata.source_columns["Cell voltage 3"], "Cell voltage")
+            self.assertEqual(loaded.source_columns["Cell voltage 2"], "Cell voltage")
+
 
 if __name__ == "__main__":
     unittest.main()

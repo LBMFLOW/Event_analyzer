@@ -62,6 +62,7 @@ class ExceedanceBarChartWidget(QWidget):
         self._patch_events: dict[object, ExceedanceEvent] = {}
         self._fallback_bar_bounds: list[tuple[float, float, float, ExceedanceEvent]] = []
         self._fallback_case_labels: list[pg.TextItem] = []
+        self._case_display_labels: dict[str, str] = {}
         self._plot_adapter = None
 
         layout = QVBoxLayout(self)
@@ -88,6 +89,11 @@ class ExceedanceBarChartWidget(QWidget):
     def set_plot_adapter(self, plot_adapter) -> None:
         """Attach an optional plot object with ``set_slider_time(float)``."""
         self._plot_adapter = plot_adapter
+
+    def set_case_display_labels(self, labels: dict[str, str] | None) -> None:
+        """Set optional display-only labels keyed by internal case name."""
+        self._case_display_labels = {str(key): str(value) for key, value in (labels or {}).items() if str(value)}
+        self.set_events(self._events)
 
     def set_events(self, events: list[ExceedanceEvent]) -> None:
         """Render grouped duration bars from exceedance events."""
@@ -176,7 +182,10 @@ class ExceedanceBarChartWidget(QWidget):
         axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
         axis.set_xticks(x_positions)
         axis.set_xticklabels(
-            [_wrap_label_for_matplotlib(case, max_chars=_matplotlib_label_line_length(len(cases))) for case in cases],
+            [
+                _wrap_label_for_matplotlib(self._display_case_label(case), max_chars=_matplotlib_label_line_length(len(cases)))
+                for case in cases
+            ],
             rotation=52,
             ha="right",
             rotation_mode="anchor",
@@ -221,7 +230,7 @@ class ExceedanceBarChartWidget(QWidget):
     def export_svg(self, path: str | Path) -> None:
         """Save the current bar chart as SVG."""
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
-            _export_fallback_svg(self._events, path)
+            _export_fallback_svg(self._events, path, case_display_labels=self._case_display_labels)
             return
         self.figure.savefig(path, format="svg", bbox_inches="tight", pad_inches=0.12)
 
@@ -375,7 +384,7 @@ class ExceedanceBarChartWidget(QWidget):
         label_length = _axis_label_length(len(cases))
         for position, case_name in zip(x_positions, cases):
             label = pg.TextItem(
-                _short_case_label(case_name, max_length=label_length),
+                _short_case_label(self._display_case_label(case_name), max_length=label_length),
                 color="#71717a",
                 anchor=(1, 0),
             )
@@ -387,6 +396,9 @@ class ExceedanceBarChartWidget(QWidget):
             plot_item.addItem(label, ignoreBounds=True)
             label.setPos(float(position), label_y)
             self._fallback_case_labels.append(label)
+
+    def _display_case_label(self, case_name: str) -> str:
+        return self._case_display_labels.get(case_name, case_name)
 
     def _fallback_mouse_clicked(self, mouse_event) -> None:
         if not isinstance(self.canvas, pg.PlotWidget):
@@ -577,14 +589,20 @@ def _format_number(value: float) -> str:
     return f"{value:.4g}"
 
 
-def _export_fallback_svg(events: list[ExceedanceEvent], path: str | Path) -> None:
+def _export_fallback_svg(
+    events: list[ExceedanceEvent],
+    path: str | Path,
+    *,
+    case_display_labels: dict[str, str] | None = None,
+) -> None:
     grouped = _group_events_by_case(events)
     cases = list(grouped)
+    display_labels = {str(key): str(value) for key, value in (case_display_labels or {}).items() if str(value)}
     max_events_for_case = max((len(case_events) for case_events in grouped.values()), default=1)
     case_count = max(1, len(cases))
     label_line_length = _svg_label_line_length(case_count)
     wrapped_labels = {
-        case: _wrap_label_lines(case, max_chars=label_line_length)
+        case: _wrap_label_lines(display_labels.get(case, case), max_chars=label_line_length)
         for case in cases
     }
     max_label_lines = max((len(lines) for lines in wrapped_labels.values()), default=1)
@@ -662,9 +680,10 @@ def _export_fallback_svg(events: list[ExceedanceEvent], path: str | Path) -> Non
         for case_index, case in enumerate(cases):
             x = plot_x + case_width * (case_index + 0.5)
             y = plot_y + plot_height + 28
+            display_label = display_labels.get(case, case)
             lines.append(
                 _svg_multiline_case_label(
-                    case,
+                    display_label,
                     x=x,
                     y=y,
                     lines=wrapped_labels[case],

@@ -91,6 +91,7 @@ class CSVMetadata:
     preview: CSVPreview
     layout: CSVLayout = field(default_factory=CSVLayout)
     units: dict[str, str] = field(default_factory=dict)
+    source_columns: dict[str, str] = field(default_factory=dict)
 
     @property
     def column_names(self) -> list[str]:
@@ -129,6 +130,7 @@ class LoadedData:
     auxiliaries: dict[str, np.ndarray] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
     units: dict[str, str] = field(default_factory=dict)
+    source_columns: dict[str, str] = field(default_factory=dict)
 
     @property
     def row_count(self) -> int:
@@ -225,13 +227,15 @@ class DataManager:
             units_row=units_row,
             data_start_row=data_start_row,
         )
-        unique_headers = _read_unique_csv_headers(csv_path, header_row=layout.header_row)
+        source_headers, unique_headers = _read_csv_headers(csv_path, header_row=layout.header_row)
+        source_columns = dict(zip(unique_headers, source_headers))
         units = _read_units(csv_path, unique_headers, units_row=layout.units_row)
         if pl is None:
             return self._open_csv_stdlib(
                 csv_path,
                 layout=layout,
                 unique_headers=unique_headers,
+                source_columns=source_columns,
                 units=units,
                 cancel_token=cancel_token,
                 progress_callback=progress_callback,
@@ -273,6 +277,7 @@ class DataManager:
             preview=self._frame_to_preview(preview_frame),
             layout=layout,
             units=units,
+            source_columns=source_columns,
         )
         self._metadata = metadata
         _report(progress_callback, 4, 4, "CSV preview ready")
@@ -441,6 +446,7 @@ class DataManager:
             auxiliaries=loaded_auxiliaries,
             warnings=warnings,
             units=dict(metadata.units),
+            source_columns=dict(metadata.source_columns),
         )
 
     load_selected = select_columns
@@ -451,6 +457,7 @@ class DataManager:
         *,
         layout: CSVLayout,
         unique_headers: Sequence[str],
+        source_columns: Mapping[str, str],
         units: Mapping[str, str],
         cancel_token: object | None,
         progress_callback: Callable[[int, int, str], None] | None,
@@ -479,6 +486,7 @@ class DataManager:
             preview=CSVPreview(headers=headers, rows=preview_rows),
             layout=layout,
             units=dict(units),
+            source_columns=dict(source_columns),
         )
         self._metadata = metadata
         _report(progress_callback, 4, 4, "CSV preview ready")
@@ -581,6 +589,7 @@ class DataManager:
             auxiliaries=loaded_auxiliaries,
             warnings=warnings,
             units=dict(metadata.units),
+            source_columns=dict(metadata.source_columns),
         )
 
     def _read_schema(
@@ -1004,14 +1013,20 @@ def _read_selected_csv_rows(
         raise UnreadableCSVError(f"Could not load selected CSV columns: {exc}") from exc
 
 
-def _read_unique_csv_headers(path: Path, *, header_row: int = 1) -> list[str]:
+def _read_csv_headers(path: Path, *, header_row: int = 1) -> tuple[list[str], list[str]]:
     try:
         with path.open(newline="", encoding="utf-8-sig") as handle:
             reader = csv.reader(handle)
             raw_headers = _row_at(reader, header_row) or []
-            return _unique_column_names(raw_headers)
+            source_headers = _base_column_names(raw_headers)
+            return source_headers, _unique_column_names_from_base(source_headers)
     except Exception as exc:
         raise UnreadableCSVError(f"Could not read CSV header from '{path}': {exc}") from exc
+
+
+def _read_unique_csv_headers(path: Path, *, header_row: int = 1) -> list[str]:
+    _source_headers, unique_headers = _read_csv_headers(path, header_row=header_row)
+    return unique_headers
 
 
 def _read_units(path: Path, headers: Sequence[str], *, units_row: int | None) -> dict[str, str]:
@@ -1162,12 +1177,22 @@ def _is_float_like(value: object) -> bool:
 
 
 def _unique_column_names(raw_headers: Sequence[object]) -> list[str]:
-    counts: dict[str, int] = {}
+    return _unique_column_names_from_base(_base_column_names(raw_headers))
+
+
+def _base_column_names(raw_headers: Sequence[object]) -> list[str]:
     names: list[str] = []
     for index, raw_header in enumerate(raw_headers, start=1):
         base = str(raw_header).strip() if raw_header is not None else ""
-        if not base:
-            base = f"Column {index}"
+        names.append(base or f"Column {index}")
+    return names
+
+
+def _unique_column_names_from_base(base_headers: Sequence[str]) -> list[str]:
+    counts: dict[str, int] = {}
+    names: list[str] = []
+    for raw_base in base_headers:
+        base = str(raw_base).strip()
         count = counts.get(base, 0) + 1
         counts[base] = count
         names.append(base if count == 1 else f"{base} {count}")

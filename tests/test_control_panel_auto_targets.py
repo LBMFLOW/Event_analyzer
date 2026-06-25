@@ -11,6 +11,7 @@ pytest.importorskip("PyQt6")
 from PyQt6.QtWidgets import QApplication
 
 from event_analyzer.ui.control_panel import ControlPanel
+from event_analyzer.ui.main_window_controller import _case_display_labels
 
 
 def test_target_columns_are_derived_from_time_and_auxiliary_selection() -> None:
@@ -34,3 +35,21 @@ def test_target_columns_are_derived_from_time_and_auxiliary_selection() -> None:
 
     panel.close()
     app.processEvents()
+
+
+def test_duplicate_source_target_headers_get_case_number_labels() -> None:
+    labels = _case_display_labels(
+        ["Cell voltage", "Cell voltage 2", "Cell voltage 3", "aux_temperature"],
+        {
+            "Cell voltage": "Cell voltage",
+            "Cell voltage 2": "Cell voltage",
+            "Cell voltage 3": "Cell voltage",
+            "aux_temperature": "aux_temperature",
+        },
+    )
+
+    assert labels == {
+        "Cell voltage": "Case# 1",
+        "Cell voltage 2": "Case# 2",
+        "Cell voltage 3": "Case# 3",
+    }

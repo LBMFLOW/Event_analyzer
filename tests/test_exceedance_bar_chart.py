@@ -98,6 +98,30 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
             self.assertEqual((float(label.anchor.x()), float(label.anchor.y())), (1.0, 0.0))
         widget.close()
 
+    def test_case_display_labels_are_used_in_fallback_chart_and_svg(self) -> None:
+        events = [
+            ExceedanceEvent("Cell voltage", 1, 0.0, 2.0, 2.0, 5.0, 1.0, 3.0, 0.0, 4.0),
+            ExceedanceEvent("Cell voltage 2", 1, 0.0, 1.0, 1.0, 4.0, 0.5, 3.0, 0.0, 4.0),
+        ]
+        labels = {"Cell voltage": "Case# 1", "Cell voltage 2": "Case# 2"}
+
+        with patch("event_analyzer.plotting.exceedance_chart.MATPLOTLIB_AVAILABLE", False):
+            widget = ExceedanceBarChartWidget()
+            widget.set_case_display_labels(labels)
+            widget.set_events(events)
+
+            visible_labels = [label.textItem.toPlainText() for label in widget._fallback_case_labels]
+            self.assertEqual(visible_labels, ["Case# 1", "Case# 2"])
+
+            path = Path.cwd() / "test_exceedance_chart_case_labels.svg"
+            widget.export_svg(path)
+
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("Case# 1", text)
+        self.assertIn("Case# 2", text)
+        self.assertNotIn(">Cell voltage<", text)
+        widget.close()
+
     def test_fallback_svg_uses_full_labels_and_duration_values(self) -> None:
         events = [
             ExceedanceEvent(

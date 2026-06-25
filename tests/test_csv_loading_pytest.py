@@ -194,6 +194,9 @@ def test_duplicate_target_headers_are_numbered_and_loaded_separately(workspace_t
         "Cell voltage 3",
         "aux_current",
     ]
+    assert metadata.source_columns["Cell voltage"] == "Cell voltage"
+    assert metadata.source_columns["Cell voltage 2"] == "Cell voltage"
+    assert metadata.source_columns["Cell voltage 3"] == "Cell voltage"
 
     loaded = manager.select_columns(
         time_column="time_s",
@@ -207,6 +210,7 @@ def test_duplicate_target_headers_are_numbered_and_loaded_separately(workspace_t
     assert loaded.targets["Cell voltage 3"][0] == 3.3
     assert loaded.targets["Cell voltage 2"][2] != loaded.targets["Cell voltage 2"][2]
     assert list(loaded.auxiliaries) == ["aux_current"]
+    assert loaded.source_columns["Cell voltage 3"] == "Cell voltage"
 
 
 def test_csv_layout_autodetects_header_units_and_data_start_rows(workspace_tmp: Path) -> None:

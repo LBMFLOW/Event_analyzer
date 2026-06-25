@@ -43,10 +43,13 @@ def test_target_columns_are_derived_from_time_and_auxiliary_selection() -> None:
     panel.main_target_max_edit.setText("4")
     panel.chart_y_min_edit.setText("0")
     panel.chart_y_max_edit.setText("10")
+    panel.chart_x_axis_title_edit.setText("Selected cases")
+    panel.chart_y_axis_title_edit.setText("Duration above limit")
     panel.set_chart_font_sizes(axis_title_font_size=18, tick_label_font_size=16)
 
     assert panel.main_plot_range_texts() == ("1", "2", "3", "4")
     assert panel.chart_y_range_texts() == ("0", "10")
+    assert panel.chart_axis_titles() == ("Selected cases", "Duration above limit")
     assert panel.chart_font_sizes() == (18, 16)
 
     panel.close()

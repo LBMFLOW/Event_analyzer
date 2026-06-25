@@ -21,6 +21,8 @@ class SessionState:
     main_time_range: tuple[float, float] | None = None
     main_target_range: tuple[float, float] | None = None
     chart_y_range: tuple[float, float] | None = None
+    chart_x_axis_title: str = ""
+    chart_y_axis_title: str = ""
     chart_axis_title_font_size: int = 14
     chart_tick_label_font_size: int = 12
     dividers: list[dict[str, object]] = field(default_factory=list)

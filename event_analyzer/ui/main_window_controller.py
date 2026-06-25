@@ -601,10 +601,15 @@ class MainWindowController:
     def _apply_chart_plot_settings(self, *, show_errors: bool = True) -> bool:
         panel = self.window.control_panel
         chart_min, chart_max = panel.chart_y_range_texts()
+        chart_x_axis_title, chart_y_axis_title = panel.chart_axis_titles()
         axis_title_font_size, tick_label_font_size = panel.chart_font_sizes()
         try:
             chart_y_range = _parse_optional_range_texts(chart_min, chart_max, "exceedance chart y range")
             chart = self.window.workspace.bar_chart
+            chart.set_axis_titles(
+                x_axis_title=chart_x_axis_title,
+                y_axis_title=chart_y_axis_title,
+            )
             chart.set_y_range(chart_y_range)
             chart.set_font_sizes(
                 axis_title_font_size=axis_title_font_size,
@@ -783,6 +788,8 @@ class MainWindowController:
                 self.window.control_panel.chart_y_range_texts()[1],
                 "exceedance chart y range",
             ),
+            chart_x_axis_title=self.window.control_panel.chart_axis_titles()[0],
+            chart_y_axis_title=self.window.control_panel.chart_axis_titles()[1],
             chart_axis_title_font_size=self.window.control_panel.chart_font_sizes()[0],
             chart_tick_label_font_size=self.window.control_panel.chart_font_sizes()[1],
             dividers=self.divider_manager.serialize(),
@@ -807,6 +814,10 @@ class MainWindowController:
         panel.y_axis_title_edit.setText(session.y_axis_title)
         panel.set_main_plot_ranges(time_range=session.main_time_range, target_range=session.main_target_range)
         panel.set_chart_y_range(session.chart_y_range)
+        panel.set_chart_axis_titles(
+            x_axis_title=session.chart_x_axis_title,
+            y_axis_title=session.chart_y_axis_title,
+        )
         panel.set_chart_font_sizes(
             axis_title_font_size=session.chart_axis_title_font_size,
             tick_label_font_size=session.chart_tick_label_font_size,

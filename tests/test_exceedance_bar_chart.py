@@ -83,6 +83,7 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
 
     def test_chart_y_range_and_font_sizes_apply_to_matplotlib_axis(self) -> None:
         widget = ExceedanceBarChartWidget()
+        widget.set_axis_titles(x_axis_title="Selected cases", y_axis_title="Seconds above limit")
         widget.set_y_range((0.0, 10.0))
         widget.set_font_sizes(axis_title_font_size=20, tick_label_font_size=16)
         widget.set_events([ExceedanceEvent("case_a", 1, 0.0, 2.0, 4.0, 5.0, 1.0, 3.0, 0.0, 4.0)])
@@ -90,6 +91,8 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         if widget.figure is not None:
             axis = widget.figure.axes[0]
             self.assertEqual(axis.get_ylim(), (0.0, 10.0))
+            self.assertEqual(axis.get_xlabel(), "Selected cases")
+            self.assertEqual(axis.get_ylabel(), "Seconds above limit")
             self.assertEqual(axis.xaxis.label.get_size(), 20)
             self.assertEqual(axis.yaxis.label.get_size(), 20)
             self.assertTrue(all(label.get_size() == 16 for label in axis.get_yticklabels()))
@@ -211,13 +214,17 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         _export_fallback_svg(
             events,
             path,
+            x_axis_title="Selected cases",
+            y_axis_title="Seconds above threshold",
             y_range=(0.0, 20.0),
             axis_title_font_size=24,
             tick_label_font_size=16,
         )
         text = path.read_text(encoding="utf-8")
 
-        self.assertIn('font-size="24" text-anchor="middle">Case</text>', text)
+        self.assertIn('font-size="24" text-anchor="middle">Selected cases</text>', text)
+        self.assertIn('font-size="24" transform=', text)
+        self.assertIn(">Seconds above threshold</text>", text)
         self.assertIn('font-size="16" text-anchor="end">20</text>', text)
 
 

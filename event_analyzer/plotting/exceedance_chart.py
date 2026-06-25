@@ -65,6 +65,8 @@ class ExceedanceBarChartWidget(QWidget):
         self._fallback_case_labels: list[pg.TextItem] = []
         self._case_display_labels: dict[str, str] = {}
         self._region_name = ""
+        self._x_axis_title = ""
+        self._y_axis_title = ""
         self._y_range: tuple[float, float] | None = None
         self._axis_title_font_size = 14
         self._tick_label_font_size = 12
@@ -105,6 +107,12 @@ class ExceedanceBarChartWidget(QWidget):
         self._region_name = str(name or "").strip()
         self.set_events(self._events)
 
+    def set_axis_titles(self, *, x_axis_title: str = "", y_axis_title: str = "") -> None:
+        """Set optional custom axis titles for the chart and SVG export."""
+        self._x_axis_title = str(x_axis_title or "").strip()
+        self._y_axis_title = str(y_axis_title or "").strip()
+        self.set_events(self._events)
+
     def set_y_range(self, value_range: tuple[float, float] | None) -> None:
         """Set an optional manual y-axis range for the duration chart."""
         self._y_range = _validate_optional_range(value_range, "chart y range")
@@ -133,8 +141,8 @@ class ExceedanceBarChartWidget(QWidget):
             self.figure.suptitle("Exceedance durations", fontsize=18, y=0.96)
             if self._region_name:
                 self.figure.text(0.085, 0.90, f"Region: {self._region_name}", fontsize=11, color="#111827")
-            axis.set_xlabel("Case", fontsize=self._axis_title_font_size, labelpad=1)
-            axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=self._axis_title_font_size)
+            axis.set_xlabel(self._resolved_x_axis_title(), fontsize=self._axis_title_font_size, labelpad=1)
+            axis.set_ylabel(self._resolved_y_axis_title(), fontsize=self._axis_title_font_size)
             axis.set_ylim(*_resolve_y_range(1.0, self._y_range))
             axis.text(
                 0.5,
@@ -204,8 +212,8 @@ class ExceedanceBarChartWidget(QWidget):
         self.figure.text(0.075, 0.925, f"Events: {len(self._events)}", fontsize=11, color="#111827")
         if self._region_name:
             self.figure.text(0.075, 0.895, f"Region: {self._region_name}", fontsize=11, color="#111827")
-        axis.set_xlabel("Case", fontsize=self._axis_title_font_size, labelpad=1)
-        axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=self._axis_title_font_size)
+        axis.set_xlabel(self._resolved_x_axis_title(), fontsize=self._axis_title_font_size, labelpad=1)
+        axis.set_ylabel(self._resolved_y_axis_title(), fontsize=self._axis_title_font_size)
         axis.set_xticks(x_positions)
         axis.set_xticklabels(
             [
@@ -261,6 +269,8 @@ class ExceedanceBarChartWidget(QWidget):
                 path,
                 case_display_labels=self._case_display_labels,
                 region_name=self._region_name,
+                x_axis_title=self._resolved_x_axis_title(),
+                y_axis_title=self._resolved_y_axis_title(),
                 y_range=self._y_range,
                 axis_title_font_size=self._axis_title_font_size,
                 tick_label_font_size=self._tick_label_font_size,
@@ -345,8 +355,8 @@ class ExceedanceBarChartWidget(QWidget):
         label_style = {"font-size": f"{self._axis_title_font_size}pt"}
         tick_font = QFont()
         tick_font.setPointSize(self._tick_label_font_size)
-        plot_item.setLabel("bottom", "Case", **label_style)
-        plot_item.setLabel("left", f"Duration above threshold ({self.time_unit})", **label_style)
+        plot_item.setLabel("bottom", self._resolved_x_axis_title(), **label_style)
+        plot_item.setLabel("left", self._resolved_y_axis_title(), **label_style)
         plot_item.getAxis("bottom").setStyle(tickFont=tick_font)
         plot_item.getAxis("left").setStyle(tickFont=tick_font)
 
@@ -444,6 +454,12 @@ class ExceedanceBarChartWidget(QWidget):
 
     def _display_case_label(self, case_name: str) -> str:
         return self._case_display_labels.get(case_name, case_name)
+
+    def _resolved_x_axis_title(self) -> str:
+        return self._x_axis_title or "Case"
+
+    def _resolved_y_axis_title(self) -> str:
+        return self._y_axis_title or f"Duration above threshold ({self.time_unit})"
 
     def _fallback_mouse_clicked(self, mouse_event) -> None:
         if not isinstance(self.canvas, pg.PlotWidget):
@@ -651,6 +667,8 @@ def _export_fallback_svg(
     *,
     case_display_labels: dict[str, str] | None = None,
     region_name: str = "",
+    x_axis_title: str = "Case",
+    y_axis_title: str = "Duration above threshold",
     y_range: tuple[float, float] | None = None,
     axis_title_font_size: int = 18,
     tick_label_font_size: int = 14,
@@ -689,6 +707,8 @@ def _export_fallback_svg(
     legend_x = plot_x
     value_font_size = 14 if case_count <= 45 else 13
     x_axis_label_y = plot_y + plot_height + bottom_margin - 22
+    x_axis_title = str(x_axis_title or "Case")
+    y_axis_title = str(y_axis_title or "Duration above threshold")
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="white"/>',
@@ -702,8 +722,8 @@ def _export_fallback_svg(
             f'<rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d4d4d8" stroke-width="0.7"/>',
             f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
             f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
-            f'<text x="{plot_x + plot_width / 2:.1f}" y="{x_axis_label_y:.1f}" font-family="Arial" font-size="{axis_title_font_size}" text-anchor="middle">Case</text>',
-            f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="{axis_title_font_size}" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
+            f'<text x="{plot_x + plot_width / 2:.1f}" y="{x_axis_label_y:.1f}" font-family="Arial" font-size="{axis_title_font_size}" text-anchor="middle">{_xml_escape(x_axis_title)}</text>',
+            f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="{axis_title_font_size}" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">{_xml_escape(y_axis_title)}</text>',
         ]
     )
     for tick_index in range(5):

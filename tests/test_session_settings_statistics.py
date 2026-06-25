@@ -39,6 +39,8 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
             main_time_range=(10.0, 20.0),
             main_target_range=(0.2, 0.8),
             chart_y_range=(0.0, 100.0),
+            chart_x_axis_title="Selected cases",
+            chart_y_axis_title="Seconds above limit",
             chart_axis_title_font_size=18,
             chart_tick_label_font_size=16,
             dividers=[{"id": "d1", "time": 1.0}],
@@ -65,6 +67,8 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
         self.assertEqual(restored.main_time_range, (10.0, 20.0))
         self.assertEqual(restored.main_target_range, (0.2, 0.8))
         self.assertEqual(restored.chart_y_range, (0.0, 100.0))
+        self.assertEqual(restored.chart_x_axis_title, "Selected cases")
+        self.assertEqual(restored.chart_y_axis_title, "Seconds above limit")
         self.assertEqual(restored.chart_axis_title_font_size, 18)
         self.assertEqual(restored.chart_tick_label_font_size, 16)
         self.assertEqual(restored.dividers[0]["time"], 1.0)

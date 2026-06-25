@@ -258,6 +258,10 @@ class ControlPanel(QWidget):
         self.chart_y_min_edit.setPlaceholderText("Auto")
         self.chart_y_max_edit = QLineEdit()
         self.chart_y_max_edit.setPlaceholderText("Auto")
+        self.chart_x_axis_title_edit = QLineEdit()
+        self.chart_x_axis_title_edit.setPlaceholderText("Case")
+        self.chart_y_axis_title_edit = QLineEdit()
+        self.chart_y_axis_title_edit.setPlaceholderText("Auto")
         self.chart_axis_title_font_spin = QSpinBox()
         self.chart_axis_title_font_spin.setRange(6, 48)
         self.chart_axis_title_font_spin.setValue(14)
@@ -318,6 +322,9 @@ class ControlPanel(QWidget):
     def chart_y_range_texts(self) -> tuple[str, str]:
         return self.chart_y_min_edit.text().strip(), self.chart_y_max_edit.text().strip()
 
+    def chart_axis_titles(self) -> tuple[str, str]:
+        return self.chart_x_axis_title_edit.text().strip(), self.chart_y_axis_title_edit.text().strip()
+
     def chart_font_sizes(self) -> tuple[int, int]:
         return self.chart_axis_title_font_spin.value(), self.chart_tick_label_font_spin.value()
 
@@ -342,6 +349,11 @@ class ControlPanel(QWidget):
         with QSignalBlocker(self.chart_y_min_edit), QSignalBlocker(self.chart_y_max_edit):
             self.chart_y_min_edit.setText("" if value_range is None else f"{value_range[0]:.12g}")
             self.chart_y_max_edit.setText("" if value_range is None else f"{value_range[1]:.12g}")
+
+    def set_chart_axis_titles(self, *, x_axis_title: str, y_axis_title: str) -> None:
+        with QSignalBlocker(self.chart_x_axis_title_edit), QSignalBlocker(self.chart_y_axis_title_edit):
+            self.chart_x_axis_title_edit.setText(x_axis_title)
+            self.chart_y_axis_title_edit.setText(y_axis_title)
 
     def set_chart_font_sizes(self, *, axis_title_font_size: int, tick_label_font_size: int) -> None:
         with QSignalBlocker(self.chart_axis_title_font_spin), QSignalBlocker(self.chart_tick_label_font_spin):
@@ -565,6 +577,8 @@ class ControlPanel(QWidget):
         plot_form.addRow("Target min", self.main_target_min_edit)
         plot_form.addRow("Target max", self.main_target_max_edit)
         plot_form.addRow(QLabel("Exceedance chart"))
+        plot_form.addRow("X-axis title", self.chart_x_axis_title_edit)
+        plot_form.addRow("Y-axis title", self.chart_y_axis_title_edit)
         plot_form.addRow("Y min", self.chart_y_min_edit)
         plot_form.addRow("Y max", self.chart_y_max_edit)
         plot_form.addRow("Axis title font", self.chart_axis_title_font_spin)
@@ -617,6 +631,8 @@ class ControlPanel(QWidget):
         self.main_time_max_edit.editingFinished.connect(self.plot_settings_changed)
         self.main_target_min_edit.editingFinished.connect(self.plot_settings_changed)
         self.main_target_max_edit.editingFinished.connect(self.plot_settings_changed)
+        self.chart_x_axis_title_edit.editingFinished.connect(self.plot_settings_changed)
+        self.chart_y_axis_title_edit.editingFinished.connect(self.plot_settings_changed)
         self.chart_y_min_edit.editingFinished.connect(self.plot_settings_changed)
         self.chart_y_max_edit.editingFinished.connect(self.plot_settings_changed)
         self.chart_axis_title_font_spin.valueChanged.connect(self.plot_settings_changed)

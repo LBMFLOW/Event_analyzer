@@ -59,6 +59,21 @@ def export_bar_chart_svg(chart: Any, path: str | Path) -> None:
         raise ExportError(f"Could not export bar chart SVG: {exc}") from exc
 
 
+def export_count_curve_svg(chart: Any, path: str | Path) -> None:
+    """Export an exceedance count curve to SVG."""
+    try:
+        if hasattr(chart, "export_svg"):
+            chart.export_svg(path)
+        elif hasattr(chart, "save_svg"):
+            chart.save_svg(path)
+        else:
+            raise ExportError("The count-curve widget does not support SVG export.")
+    except ExportError:
+        raise
+    except Exception as exc:
+        raise ExportError(f"Could not export count curve SVG: {exc}") from exc
+
+
 def export_events_csv(
     events: Sequence[ExceedanceEvent],
     path: str | Path,
@@ -222,6 +237,7 @@ __all__ = [
     "export_analysis_summary_csv",
     "export_analysis_summary_json",
     "export_bar_chart_svg",
+    "export_count_curve_svg",
     "export_events_csv",
     "export_main_plot_svg",
     "export_selected_region_csv",

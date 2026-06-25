@@ -20,6 +20,7 @@ class MainWindowActions:
     load_session: QAction
     save_main_plot_svg: QAction
     save_bar_chart_svg: QAction
+    save_count_curve_svg: QAction
     export_events_csv: QAction
     export_region_csv: QAction
     export_analysis_summary_json: QAction
@@ -69,6 +70,9 @@ class MainWindow(QMainWindow):
         save_bar_chart_svg = QAction("Save Bar Chart as SVG...", self)
         save_bar_chart_svg.setShortcut(QKeySequence("Ctrl+Shift+B"))
 
+        save_count_curve_svg = QAction("Save Exceedance Count Curve as SVG...", self)
+        save_count_curve_svg.setShortcut(QKeySequence("Ctrl+Shift+C"))
+
         export_events_csv = QAction("Export Exceedance Events CSV...", self)
         export_events_csv.setShortcut(QKeySequence("Ctrl+Shift+E"))
 
@@ -103,6 +107,7 @@ class MainWindow(QMainWindow):
             load_session=load_session,
             save_main_plot_svg=save_main_plot_svg,
             save_bar_chart_svg=save_bar_chart_svg,
+            save_count_curve_svg=save_count_curve_svg,
             export_events_csv=export_events_csv,
             export_region_csv=export_region_csv,
             export_analysis_summary_json=export_analysis_summary_json,
@@ -124,6 +129,7 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.actions.save_main_plot_svg)
         file_menu.addAction(self.actions.save_bar_chart_svg)
+        file_menu.addAction(self.actions.save_count_curve_svg)
         file_menu.addAction(self.actions.export_events_csv)
         file_menu.addAction(self.actions.export_region_csv)
         file_menu.addAction(self.actions.export_analysis_summary_json)

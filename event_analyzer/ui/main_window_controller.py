@@ -21,6 +21,7 @@ from event_analyzer.exporters import (
     export_analysis_summary_csv,
     export_analysis_summary_json,
     export_bar_chart_svg,
+    export_count_curve_svg,
     export_events_csv,
     export_main_plot_svg,
     export_selected_region_csv,
@@ -74,12 +75,14 @@ class MainWindowController:
         panel = self.window.control_panel
         plot = self.window.workspace.main_plot.plot_widget
         plot.set_save_dialog_helpers(self._default_save_path, self._remember_save_path)
+        self.window.workspace.count_curve.set_save_dialog_helpers(self._default_save_path, self._remember_save_path)
 
         actions.open_csv.triggered.connect(self.open_csv)
         actions.save_session.triggered.connect(self.save_session)
         actions.load_session.triggered.connect(self.load_session)
         actions.save_main_plot_svg.triggered.connect(self.save_main_plot_svg)
         actions.save_bar_chart_svg.triggered.connect(self.save_bar_chart_svg)
+        actions.save_count_curve_svg.triggered.connect(self.save_count_curve_svg)
         actions.export_events_csv.triggered.connect(self.export_exceedance_events_csv)
         actions.export_region_csv.triggered.connect(self.export_selected_region_csv)
         actions.export_analysis_summary_json.triggered.connect(self.export_analysis_summary_json)
@@ -306,6 +309,7 @@ class MainWindowController:
         self.threshold_manager.set_target_data(data.time_values, data.targets)
         self.threshold_manager.set_region(*self._selected_region_tuple_or_none_args())
         self._refresh_statistics()
+        self._sync_count_curve_source()
         self.window.statusBar().showMessage(f"Plotted {len(target_names)} target case(s).")
 
     def set_loaded_data_for_export(
@@ -369,6 +373,18 @@ class MainWindowController:
         path = self._choose_save_path("Save bar chart SVG", "exceedance_durations.svg", "SVG files (*.svg)")
         if path:
             self._run_export(lambda: export_bar_chart_svg(self.window.workspace.bar_chart, path), f"Saved bar chart SVG: {path}")
+
+    def save_count_curve_svg(self) -> None:
+        path = self._choose_save_path(
+            "Save exceedance count curve SVG",
+            "exceedance_count_curve.svg",
+            "SVG files (*.svg)",
+        )
+        if path:
+            self._run_export(
+                lambda: export_count_curve_svg(self.window.workspace.count_curve, path),
+                f"Saved exceedance count curve SVG: {path}",
+            )
 
     def export_exceedance_events_csv(self) -> None:
         path = self._choose_save_path("Export exceedance events CSV", "exceedance_events.csv", "CSV files (*.csv)")
@@ -719,6 +735,7 @@ class MainWindowController:
         self.window.workspace.bar_chart.set_region_name(self.current_region_name)
         self.threshold_manager.set_region(region.start_time, region.end_time)
         self._refresh_statistics()
+        self._sync_count_curve_source()
 
     def _update_region_text(self) -> None:
         region = self.region_selector.selected_region if self.region_selector is not None else None
@@ -733,6 +750,7 @@ class MainWindowController:
                 f"{region.label}: {region.start_time:.6g} to {region.end_time:.6g}"
             )
         self.window.workspace.bar_chart.set_region_name(self.current_region_name)
+        self._sync_count_curve_source()
 
     def _refresh_statistics(self) -> None:
         if self.loaded_data is None:
@@ -747,6 +765,19 @@ class MainWindowController:
             units=self.case_units,
         )
         self.window.workspace.statistics_table.set_statistics(rows)
+
+    def _sync_count_curve_source(self) -> None:
+        if self.loaded_data is None:
+            return
+        target_names = list(self.loaded_data.targets)
+        default_x_label = _target_axis_label(target_names, self.column_units) if target_names else "Target parameter"
+        self.window.workspace.count_curve.set_source_data(
+            self.loaded_data.time_values,
+            self.loaded_data.targets,
+            region=self._selected_region_tuple(),
+            region_name=self._export_region_name(),
+            default_x_axis_title=default_x_label,
+        )
 
     def _selected_region_tuple(self) -> tuple[float | None, float | None] | None:
         if self.region_selector is None or self.region_selector.selected_region is None:
@@ -792,6 +823,7 @@ class MainWindowController:
             chart_y_axis_title=self.window.control_panel.chart_axis_titles()[1],
             chart_axis_title_font_size=self.window.control_panel.chart_font_sizes()[0],
             chart_tick_label_font_size=self.window.control_panel.chart_font_sizes()[1],
+            count_curve_settings=self.window.workspace.count_curve.settings(),
             dividers=self.divider_manager.serialize(),
             threshold=self.threshold_manager.value,
             region=self._selected_region_tuple(),
@@ -822,6 +854,7 @@ class MainWindowController:
             axis_title_font_size=session.chart_axis_title_font_size,
             tick_label_font_size=session.chart_tick_label_font_size,
         )
+        self.window.workspace.count_curve.apply_settings(session.count_curve_settings)
         self._apply_chart_plot_settings(show_errors=False)
         panel.set_trace_boxes_visible(session.trace_boxes_visible)
         self.window.workspace.main_plot.plot_widget.set_trace_boxes_visible(session.trace_boxes_visible)

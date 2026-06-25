@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
 
 from event_analyzer.analysis.exceedance import ExceedanceEvent
 from event_analyzer.plotting.exceedance_chart import ExceedanceBarChartWidget
+from event_analyzer.plotting.exceedance_count_curve import ExceedanceCountCurveWidget
 from event_analyzer.plotting.time_series_plot import TimeSeriesPlotWidget
 
 
@@ -41,6 +42,10 @@ class MainPlotPanel(QWidget):
 
 class BarChartPanel(ExceedanceBarChartWidget):
     """Compatibility wrapper around the real exceedance bar chart widget."""
+
+
+class CountCurvePanel(ExceedanceCountCurveWidget):
+    """Count of cases exceeding candidate target thresholds."""
 
 
 class CsvPreviewTable(QTableWidget):
@@ -199,12 +204,14 @@ class PlotWorkspace(QWidget):
         self.main_plot = MainPlotPanel()
         self.bar_chart = BarChartPanel(time_unit="time")
         self.bar_chart.set_plot_adapter(self.main_plot.plot_widget)
+        self.count_curve = CountCurvePanel()
         self.preview_table = CsvPreviewTable()
         self.summary_table = ExceedanceSummaryTable()
         self.statistics_table = RegionStatisticsTable()
 
         self.tabs = QTabWidget()
         self.tabs.addTab(self.bar_chart, "Exceedance durations")
+        self.tabs.addTab(self.count_curve, "Exceedance counts")
         self.tabs.addTab(self.preview_table, "CSV preview")
         self.tabs.addTab(self.summary_table, "Exceedance summary")
         self.tabs.addTab(self.statistics_table, "Region statistics")

@@ -43,6 +43,13 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
             chart_y_axis_title="Seconds above limit",
             chart_axis_title_font_size=18,
             chart_tick_label_font_size=16,
+            count_curve_settings={
+                "threshold_range": (0.0, 5.0),
+                "levels": 500,
+                "title": "Count curve",
+                "x_axis_title": "Threshold",
+                "y_axis_title": "Cases",
+            },
             dividers=[{"id": "d1", "time": 1.0}],
             threshold=2.5,
             region=(1.0, 3.0),
@@ -71,6 +78,8 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
         self.assertEqual(restored.chart_y_axis_title, "Seconds above limit")
         self.assertEqual(restored.chart_axis_title_font_size, 18)
         self.assertEqual(restored.chart_tick_label_font_size, 16)
+        self.assertEqual(restored.count_curve_settings["threshold_range"], [0.0, 5.0])
+        self.assertEqual(restored.count_curve_settings["x_axis_title"], "Threshold")
         self.assertEqual(restored.dividers[0]["time"], 1.0)
         self.assertEqual(restored.region, (1.0, 3.0))
         self.assertEqual(restored.region_name, "Discharge 1")

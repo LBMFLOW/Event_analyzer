@@ -25,6 +25,7 @@ class SessionState:
     chart_y_axis_title: str = ""
     chart_axis_title_font_size: int = 14
     chart_tick_label_font_size: int = 12
+    count_curve_settings: dict[str, object] = field(default_factory=dict)
     dividers: list[dict[str, object]] = field(default_factory=list)
     threshold: float | None = None
     region: tuple[float, float] | None = None

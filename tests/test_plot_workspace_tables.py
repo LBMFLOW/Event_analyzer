@@ -12,7 +12,7 @@ if PYQT_AVAILABLE:
     from PyQt6.QtWidgets import QApplication, QHeaderView, QTableWidgetSelectionRange
 
     from event_analyzer.analysis.exceedance import ExceedanceEvent
-    from event_analyzer.ui.plot_workspace import CsvPreviewTable, ExceedanceSummaryTable, RegionStatisticsTable
+    from event_analyzer.ui.plot_workspace import CsvPreviewTable, ExceedanceSummaryTable, PlotWorkspace, RegionStatisticsTable
 
 
 @unittest.skipUnless(PYQT_AVAILABLE, "PyQt6 is required")
@@ -32,6 +32,13 @@ class PlotWorkspaceTableTests(unittest.TestCase):
                 QHeaderView.ResizeMode.Interactive,
             )
             table.close()
+
+    def test_count_curve_tab_is_after_exceedance_durations(self) -> None:
+        workspace = PlotWorkspace()
+
+        self.assertEqual(workspace.tabs.tabText(0), "Exceedance durations")
+        self.assertEqual(workspace.tabs.tabText(1), "Exceedance counts")
+        workspace.close()
 
     def test_exceedance_summary_copies_table_for_excel(self) -> None:
         table = ExceedanceSummaryTable()

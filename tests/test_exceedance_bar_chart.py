@@ -134,6 +134,19 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
 
         text = path.read_text(encoding="utf-8")
         self.assertIn("Region: Discharge &amp; hold", text)
+        region_match = re.search(r'<text x="28" y="([\d.]+)"[^>]*>Region:', text)
+        legend_match = re.search(r'<rect x="128" y="([\d.]+)" width="16" height="16"', text)
+        plot_match = re.search(r'<rect x="128" y="([\d.]+)" width="[^"]+" height="440"', text)
+        x_label_match = re.search(
+            r'<text x="[\d.]+" y="([\d.]+)" font-family="Arial" font-size="18" text-anchor="middle">Case</text>',
+            text,
+        )
+        self.assertIsNotNone(region_match)
+        self.assertIsNotNone(legend_match)
+        self.assertIsNotNone(plot_match)
+        self.assertIsNotNone(x_label_match)
+        self.assertGreater(float(legend_match.group(1)), float(region_match.group(1)) + 10)
+        self.assertLess(float(x_label_match.group(1)) - (float(plot_match.group(1)) + 440), 160)
         widget.close()
 
     def test_fallback_svg_uses_full_labels_and_duration_values(self) -> None:

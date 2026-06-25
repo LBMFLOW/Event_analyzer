@@ -118,7 +118,7 @@ class ExceedanceBarChartWidget(QWidget):
             self.figure.suptitle("Exceedance durations", fontsize=18, y=0.96)
             if self._region_name:
                 self.figure.text(0.085, 0.90, f"Region: {self._region_name}", fontsize=11, color="#111827")
-            axis.set_xlabel("Case", fontsize=14)
+            axis.set_xlabel("Case", fontsize=14, labelpad=1)
             axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
             axis.text(
                 0.5,
@@ -188,7 +188,7 @@ class ExceedanceBarChartWidget(QWidget):
         self.figure.text(0.075, 0.925, f"Events: {len(self._events)}", fontsize=11, color="#111827")
         if self._region_name:
             self.figure.text(0.075, 0.895, f"Region: {self._region_name}", fontsize=11, color="#111827")
-        axis.set_xlabel("Case", fontsize=14)
+        axis.set_xlabel("Case", fontsize=14, labelpad=1)
         axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
         axis.set_xticks(x_positions)
         axis.set_xticklabels(
@@ -623,6 +623,7 @@ def _export_fallback_svg(
         for case in cases
     }
     max_label_lines = max((len(lines) for lines in wrapped_labels.values()), default=1)
+    longest_label_line = max((len(line) for lines in wrapped_labels.values() for line in lines), default=8)
     legend_slots = min(max_events_for_case, 8)
     legend_columns = max(1, min(legend_slots, 4))
     legend_rows = max(1, (legend_slots + legend_columns - 1) // legend_columns)
@@ -630,8 +631,10 @@ def _export_fallback_svg(
     width = max(1200, min(2200, int(40 * case_count + 460)))
     left_margin = 128
     right_margin = 54
-    top_margin = 158 + max(0, legend_rows - 1) * 30
-    bottom_margin = max(280, min(440, 150 + max_label_lines * 46))
+    region_text = str(region_name or "").strip()
+    legend_y = 126 if region_text else 96
+    top_margin = legend_y + legend_rows * 30 + 28
+    bottom_margin = max(150, min(400, int(88 + max_label_lines * 34 + longest_label_line * 4.2)))
     plot_height = 440
     plot_width = width - left_margin - right_margin
     height = top_margin + plot_height + bottom_margin
@@ -640,10 +643,9 @@ def _export_fallback_svg(
     max_duration = max((event.duration for event in events), default=1.0)
     y_scale_max = max(1.0, max_duration * 1.2)
     legend_x = plot_x
-    legend_y = 96
     x_label_font_size = 14 if case_count <= 45 else 13
     value_font_size = 14 if case_count <= 45 else 13
-    region_text = str(region_name or "").strip()
+    x_axis_label_y = plot_y + plot_height + bottom_margin - 22
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="white"/>',
@@ -657,7 +659,7 @@ def _export_fallback_svg(
             f'<rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d4d4d8" stroke-width="0.7"/>',
             f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
             f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
-            f'<text x="{plot_x + plot_width / 2:.1f}" y="{height - 24}" font-family="Arial" font-size="18" text-anchor="middle">Case</text>',
+            f'<text x="{plot_x + plot_width / 2:.1f}" y="{x_axis_label_y:.1f}" font-family="Arial" font-size="18" text-anchor="middle">Case</text>',
             f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="18" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
         ]
     )

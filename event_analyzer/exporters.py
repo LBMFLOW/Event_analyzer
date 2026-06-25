@@ -59,14 +59,21 @@ def export_bar_chart_svg(chart: Any, path: str | Path) -> None:
         raise ExportError(f"Could not export bar chart SVG: {exc}") from exc
 
 
-def export_events_csv(events: Sequence[ExceedanceEvent], path: str | Path) -> None:
+def export_events_csv(
+    events: Sequence[ExceedanceEvent],
+    path: str | Path,
+    *,
+    region_name: str = "",
+) -> None:
     """Export exceedance events as CSV."""
     try:
         with Path(path).open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(EVENT_HEADERS)
+            headers = ["region_name", *EVENT_HEADERS] if region_name else EVENT_HEADERS
+            writer.writerow(headers)
             for event in events:
-                writer.writerow([getattr(event, header) for header in EVENT_HEADERS])
+                row = [getattr(event, header) for header in EVENT_HEADERS]
+                writer.writerow([region_name, *row] if region_name else row)
     except Exception as exc:
         raise ExportError(f"Could not export exceedance events CSV: {exc}") from exc
 
@@ -75,6 +82,8 @@ def export_selected_region_csv(
     data: Any,
     region: tuple[float | None, float | None] | None,
     path: str | Path,
+    *,
+    region_name: str = "",
 ) -> None:
     """Export selected-region data from a supported loaded-data object.
 
@@ -91,8 +100,13 @@ def export_selected_region_csv(
     try:
         with Path(path).open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(table["headers"])
-            writer.writerows(table["rows"])
+            headers = list(table["headers"])
+            rows = list(table["rows"])
+            if region_name:
+                headers = ["region_name", *headers]
+                rows = [[region_name, *row] for row in rows]
+            writer.writerow(headers)
+            writer.writerows(rows)
     except Exception as exc:
         raise ExportError(f"Could not export selected-region CSV: {exc}") from exc
 
@@ -212,4 +226,3 @@ __all__ = [
     "export_main_plot_svg",
     "export_selected_region_csv",
 ]
-

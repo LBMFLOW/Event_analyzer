@@ -180,6 +180,7 @@ class ControlPanel(QWidget):
     legend_visibility_changed = pyqtSignal(bool)
     csv_layout_apply_requested = pyqtSignal()
     plot_settings_changed = pyqtSignal()
+    region_name_changed = pyqtSignal(str)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -216,6 +217,7 @@ class ControlPanel(QWidget):
         self.threshold_spin.setRange(-1e18, 1e18)
         self.threshold_spin.setKeyboardTracking(False)
         self.disable_threshold_button = QPushButton("Disable threshold")
+        self.region_name_edit = QLineEdit("Full time range")
         self.region_label = QLabel("No region selected")
         self.region_label.setWordWrap(True)
         self.exceeding_case_count_label = QLabel("Exceeding cases: 0")
@@ -380,6 +382,13 @@ class ControlPanel(QWidget):
     def set_region_text(self, text: str) -> None:
         self.region_label.setText(text)
 
+    def region_name(self) -> str:
+        return self.region_name_edit.text().strip()
+
+    def set_region_name(self, name: str) -> None:
+        with QSignalBlocker(self.region_name_edit):
+            self.region_name_edit.setText(name)
+
     def set_threshold_value(self, value: float | None) -> None:
         if value is None:
             return
@@ -460,6 +469,9 @@ class ControlPanel(QWidget):
 
         region_group = QGroupBox("Selected region")
         region_layout = QVBoxLayout(region_group)
+        region_form = QFormLayout()
+        region_form.addRow("Name", self.region_name_edit)
+        region_layout.addLayout(region_form)
         region_layout.addWidget(self.region_label)
 
         divider_group = QGroupBox("Dividers")
@@ -520,6 +532,9 @@ class ControlPanel(QWidget):
         self.plot_title_edit.editingFinished.connect(self.plot_settings_changed)
         self.x_axis_title_edit.editingFinished.connect(self.plot_settings_changed)
         self.y_axis_title_edit.editingFinished.connect(self.plot_settings_changed)
+        self.region_name_edit.editingFinished.connect(
+            lambda: self.region_name_changed.emit(self.region_name())
+        )
 
     def _target_selection_changed(self) -> None:
         cases = self.selected_target_columns()

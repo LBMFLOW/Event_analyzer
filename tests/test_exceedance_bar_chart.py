@@ -122,6 +122,20 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertNotIn(">Cell voltage<", text)
         widget.close()
 
+    def test_region_name_is_written_to_fallback_svg(self) -> None:
+        events = [ExceedanceEvent("case_a", 1, 0.0, 2.0, 2.0, 5.0, 1.0, 3.0, 0.0, 4.0)]
+
+        with patch("event_analyzer.plotting.exceedance_chart.MATPLOTLIB_AVAILABLE", False):
+            widget = ExceedanceBarChartWidget()
+            widget.set_region_name("Discharge & hold")
+            widget.set_events(events)
+            path = Path.cwd() / "test_exceedance_chart_region_name.svg"
+            widget.export_svg(path)
+
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("Region: Discharge &amp; hold", text)
+        widget.close()
+
     def test_fallback_svg_uses_full_labels_and_duration_values(self) -> None:
         events = [
             ExceedanceEvent(

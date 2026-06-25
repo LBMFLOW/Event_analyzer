@@ -40,6 +40,8 @@ class MainWindowController:
         self.loaded_data: Any | None = None
         self.loaded_data_for_export: Any | None = None
         self.selected_region_for_export: tuple[float | None, float | None] | None = None
+        self.current_region_name = "Full time range"
+        self.region_names: dict[tuple[float | None, float | None] | None, str] = {None: "Full time range"}
         self.pending_session: SessionState | None = None
         self.case_colors: dict[str, str] = {}
         self.case_visibility: dict[str, bool] = {}
@@ -70,6 +72,7 @@ class MainWindowController:
         actions = self.window.actions
         panel = self.window.control_panel
         plot = self.window.workspace.main_plot.plot_widget
+        plot.set_save_dialog_helpers(self._default_save_path, self._remember_save_path)
 
         actions.open_csv.triggered.connect(self.open_csv)
         actions.save_session.triggered.connect(self.save_session)
@@ -100,6 +103,7 @@ class MainWindowController:
         panel.legend_visibility_changed.connect(plot.set_legend_visible)
         panel.csv_layout_apply_requested.connect(self.apply_csv_layout)
         panel.plot_settings_changed.connect(self.apply_plot_settings)
+        panel.region_name_changed.connect(self.region_name_changed)
 
         plot.request_add_divider.connect(self.add_divider_at)
         plot.request_add_threshold.connect(self.create_threshold_from_plot)
@@ -285,6 +289,10 @@ class MainWindowController:
         time_range = data.time_range
         self.divider_manager = DividerManager(time_range=time_range)
         self.region_selector = RegionSelector(time_range=time_range, plot_adapter=plot)
+        if self.pending_session is None:
+            self.current_region_name = "Full time range"
+            self.region_names = {None: self.current_region_name}
+            self._update_region_text()
 
         if self.pending_session is not None:
             self._restore_session_after_data_load(self.pending_session)
@@ -357,7 +365,14 @@ class MainWindowController:
     def export_exceedance_events_csv(self) -> None:
         path = self._choose_save_path("Export exceedance events CSV", "exceedance_events.csv", "CSV files (*.csv)")
         if path:
-            self._run_export(lambda: export_events_csv(self.threshold_manager.events, path), f"Exported exceedance events CSV: {path}")
+            self._run_export(
+                lambda: export_events_csv(
+                    self.threshold_manager.events,
+                    path,
+                    region_name=self._export_region_name(),
+                ),
+                f"Exported exceedance events CSV: {path}",
+            )
 
     def export_selected_region_csv(self) -> None:
         if self.loaded_data_for_export is None:
@@ -370,6 +385,7 @@ class MainWindowController:
                     self.loaded_data_for_export,
                     self.selected_region_for_export,
                     path,
+                    region_name=self._export_region_name(),
                 ),
                 f"Exported selected region CSV: {path}",
             )
@@ -556,6 +572,16 @@ class MainWindowController:
             extra_axis_labels=_auxiliary_axis_labels(auxiliary_names, auxiliary_axes, self.column_units),
         )
 
+    def region_name_changed(self, name: str) -> None:
+        selected_key = self._selected_region_tuple()
+        default_name = self._default_region_name()
+        actual_name = name.strip() or default_name
+        self.current_region_name = actual_name
+        self.region_names[selected_key] = actual_name
+        self.window.control_panel.set_region_name(actual_name)
+        self.window.workspace.bar_chart.set_region_name(actual_name)
+        self.window.statusBar().showMessage(f"Selected region renamed: {actual_name}")
+
     def column_selection_changed(self) -> None:
         cases = self.window.control_panel.selected_target_columns()
         self.window.control_panel.set_active_cases(cases)
@@ -634,21 +660,30 @@ class MainWindowController:
             self._refresh_statistics()
 
     def _set_active_region(self, region: SelectedRegion) -> None:
+        region_key = (region.start_time, region.end_time)
+        self.current_region_name = self.region_names.get(region_key, region.label)
+        self.window.control_panel.set_region_name(self.current_region_name)
         self.window.control_panel.set_region_text(
             f"{region.label}: {region.start_time:.6g} to {region.end_time:.6g}"
         )
         self.set_loaded_data_for_export(self.loaded_data, (region.start_time, region.end_time))
+        self.window.workspace.bar_chart.set_region_name(self.current_region_name)
         self.threshold_manager.set_region(region.start_time, region.end_time)
         self._refresh_statistics()
 
     def _update_region_text(self) -> None:
         region = self.region_selector.selected_region if self.region_selector is not None else None
         if region is None:
+            self.current_region_name = self.region_names.get(None, "Full time range")
+            self.window.control_panel.set_region_name(self.current_region_name)
             self.window.control_panel.set_region_text("Full time range")
         else:
+            self.current_region_name = self.region_names.get((region.start_time, region.end_time), region.label)
+            self.window.control_panel.set_region_name(self.current_region_name)
             self.window.control_panel.set_region_text(
                 f"{region.label}: {region.start_time:.6g} to {region.end_time:.6g}"
             )
+        self.window.workspace.bar_chart.set_region_name(self.current_region_name)
 
     def _refresh_statistics(self) -> None:
         if self.loaded_data is None:
@@ -692,6 +727,7 @@ class MainWindowController:
             dividers=self.divider_manager.serialize(),
             threshold=self.threshold_manager.value,
             region=self._selected_region_tuple(),
+            region_name=self.current_region_name,
             colors=self.case_colors,
             visibility={**self.case_visibility, **self.window.control_panel.case_visibility()},
             theme=self.settings.theme,
@@ -729,8 +765,15 @@ class MainWindowController:
 
         if session.region is not None and self.region_selector is not None:
             self.region_selector.set_region(session.region[0], session.region[1])
+            if session.region_name:
+                self.region_names[session.region] = session.region_name
             self._update_region_text()
             self.set_loaded_data_for_export(self.loaded_data, session.region)
+        elif session.region_name:
+            self.current_region_name = session.region_name
+            self.region_names[None] = session.region_name
+            self.window.control_panel.set_region_name(session.region_name)
+            self.window.workspace.bar_chart.set_region_name(session.region_name)
 
         if session.threshold is not None:
             self.window.control_panel.set_threshold_value(session.threshold)
@@ -761,7 +804,7 @@ class MainWindowController:
         return value or unit_for_column(name)
 
     def _choose_save_path(self, title: str, default_name: str, file_filter: str) -> str:
-        path, _ = QFileDialog.getSaveFileName(self.window, title, default_name, file_filter)
+        path, _ = QFileDialog.getSaveFileName(self.window, title, self._default_save_path(default_name), file_filter)
         if not path:
             return ""
         if Path(path).exists():
@@ -774,7 +817,23 @@ class MainWindowController:
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return ""
+        self._remember_save_path(path)
         return path
+
+    def _default_save_path(self, default_name: str) -> str:
+        directory = self.settings.save_directory()
+        return str(Path(directory) / default_name) if directory else default_name
+
+    def _remember_save_path(self, path: str) -> None:
+        self.settings.remember_save_path(path)
+        self.settings.save()
+
+    def _default_region_name(self) -> str:
+        region = self.region_selector.selected_region if self.region_selector is not None else None
+        return region.label if region is not None else "Full time range"
+
+    def _export_region_name(self) -> str:
+        return (self.current_region_name or self._default_region_name()).strip()
 
     def _run_export(self, export_fn, success_message: str) -> None:
         try:

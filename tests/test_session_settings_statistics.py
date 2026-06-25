@@ -39,6 +39,7 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
             dividers=[{"id": "d1", "time": 1.0}],
             threshold=2.5,
             region=(1.0, 3.0),
+            region_name="Discharge 1",
             colors={"case_a": "#ff0000"},
             visibility={"case_a": False},
             theme="dark",
@@ -57,6 +58,7 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
         self.assertEqual(restored.y_axis_title, "Voltage (V)")
         self.assertEqual(restored.dividers[0]["time"], 1.0)
         self.assertEqual(restored.region, (1.0, 3.0))
+        self.assertEqual(restored.region_name, "Discharge 1")
         self.assertEqual(restored.colors["case_a"], "#ff0000")
         self.assertFalse(restored.visibility["case_a"])
         self.assertEqual(restored.theme, "dark")
@@ -102,6 +104,21 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
 
         self.assertEqual(restored.theme, "dark")
         self.assertEqual(restored.last_csv_directory, "")
+        self.assertEqual(restored.last_save_directory, "")
+
+    def test_app_settings_remembers_last_save_directory(self) -> None:
+        directory = Path.cwd() / "test_session_settings_save_dir"
+        directory.mkdir()
+        export_path = directory / "chart.svg"
+        settings_path = directory / "settings.json"
+        settings = AppSettings()
+
+        settings.remember_save_path(export_path)
+        settings.save(settings_path)
+        restored = AppSettings.load(settings_path)
+
+        self.assertEqual(restored.last_save_directory, str(directory))
+        self.assertEqual(restored.save_directory(), str(directory))
 
     def test_unit_parsing(self) -> None:
         self.assertEqual(split_column_unit("pressure [Pa]"), ("pressure", "Pa"))

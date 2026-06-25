@@ -15,6 +15,7 @@ class AppSettings:
     recent_files: list[str] = field(default_factory=list)
     theme: str = "light"
     last_csv_directory: str = ""
+    last_save_directory: str = ""
 
     def add_recent_file(self, path: str | Path) -> None:
         resolved = str(Path(path))
@@ -36,6 +37,23 @@ class AppSettings:
                 return str(directory)
         return ""
 
+    def remember_save_path(self, path: str | Path) -> None:
+        """Remember the folder used by any Save/Export dialog."""
+        directory = _parent_directory(path)
+        if directory:
+            self.last_save_directory = directory
+
+    def save_directory(self) -> str:
+        """Return the best available folder to use for Save/Export dialogs."""
+        if self.last_save_directory:
+            directory = Path(self.last_save_directory).expanduser()
+            if directory.is_dir():
+                return str(directory)
+        csv_directory = self.open_csv_directory()
+        if csv_directory:
+            return csv_directory
+        return ""
+
     def save(self, path: str | Path | None = None) -> None:
         settings_path = Path(path) if path is not None else default_settings_path()
         settings_path.parent.mkdir(parents=True, exist_ok=True)
@@ -55,10 +73,12 @@ class AppSettings:
         if theme not in {"light", "dark"}:
             theme = "light"
         last_csv_directory = str(data.get("last_csv_directory", "") or "")
+        last_save_directory = str(data.get("last_save_directory", "") or "")
         return cls(
             recent_files=recent[:MAX_RECENT_FILES],
             theme=theme,
             last_csv_directory=last_csv_directory,
+            last_save_directory=last_save_directory,
         )
 
 
@@ -68,6 +88,10 @@ def default_settings_path() -> Path:
 
 
 def _csv_parent_directory(path: str | Path) -> str:
+    return _parent_directory(path)
+
+
+def _parent_directory(path: str | Path) -> str:
     parent = Path(path).expanduser().parent
     if str(parent) in {"", "."}:
         return ""

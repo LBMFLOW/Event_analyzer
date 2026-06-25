@@ -63,6 +63,7 @@ class ExceedanceBarChartWidget(QWidget):
         self._fallback_bar_bounds: list[tuple[float, float, float, ExceedanceEvent]] = []
         self._fallback_case_labels: list[pg.TextItem] = []
         self._case_display_labels: dict[str, str] = {}
+        self._region_name = ""
         self._plot_adapter = None
 
         layout = QVBoxLayout(self)
@@ -95,6 +96,11 @@ class ExceedanceBarChartWidget(QWidget):
         self._case_display_labels = {str(key): str(value) for key, value in (labels or {}).items() if str(value)}
         self.set_events(self._events)
 
+    def set_region_name(self, name: str) -> None:
+        """Set the selected-region name shown in the chart and SVG export."""
+        self._region_name = str(name or "").strip()
+        self.set_events(self._events)
+
     def set_events(self, events: list[ExceedanceEvent]) -> None:
         """Render grouped duration bars from exceedance events."""
         self._events = sorted(events, key=lambda event: (event.case_name, event.event_index, event.start_time))
@@ -110,6 +116,8 @@ class ExceedanceBarChartWidget(QWidget):
         if not self._events:
             self._set_canvas_width(case_count=1)
             self.figure.suptitle("Exceedance durations", fontsize=18, y=0.96)
+            if self._region_name:
+                self.figure.text(0.085, 0.90, f"Region: {self._region_name}", fontsize=11, color="#111827")
             axis.set_xlabel("Case", fontsize=14)
             axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
             axis.text(
@@ -124,7 +132,7 @@ class ExceedanceBarChartWidget(QWidget):
             axis.tick_params(axis="both", labelsize=12)
             axis.grid(axis="y", alpha=0.25)
             self.figure.set_tight_layout(False)
-            self.figure.subplots_adjust(left=0.085, right=0.985, top=0.82, bottom=0.18)
+            self.figure.subplots_adjust(left=0.085, right=0.985, top=0.78 if self._region_name else 0.82, bottom=0.18)
             self.status_label.setText("No exceedance events")
             self.canvas.draw_idle()
             return
@@ -178,6 +186,8 @@ class ExceedanceBarChartWidget(QWidget):
         axis.set_ylim(0, max(1.0, max((event.duration for event in self._events), default=1.0) * 1.16))
         self.figure.suptitle("Exceedance durations by case", fontsize=18, y=0.975)
         self.figure.text(0.075, 0.925, f"Events: {len(self._events)}", fontsize=11, color="#111827")
+        if self._region_name:
+            self.figure.text(0.075, 0.895, f"Region: {self._region_name}", fontsize=11, color="#111827")
         axis.set_xlabel("Case", fontsize=14)
         axis.set_ylabel(f"Duration above threshold ({self.time_unit})", fontsize=14)
         axis.set_xticks(x_positions)
@@ -198,14 +208,14 @@ class ExceedanceBarChartWidget(QWidget):
         self.figure.subplots_adjust(
             left=0.085,
             right=0.985,
-            top=0.76,
+            top=0.72 if self._region_name else 0.76,
             bottom=_bottom_margin(len(cases)),
         )
 
         if max_events_for_case <= 8:
             axis.legend(
                 loc="upper left",
-                bbox_to_anchor=(0.0, 1.16),
+                bbox_to_anchor=(0.0, 1.13 if self._region_name else 1.16),
                 fontsize=11,
                 ncols=min(max_events_for_case, 4),
                 frameon=False,
@@ -230,7 +240,12 @@ class ExceedanceBarChartWidget(QWidget):
     def export_svg(self, path: str | Path) -> None:
         """Save the current bar chart as SVG."""
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
-            _export_fallback_svg(self._events, path, case_display_labels=self._case_display_labels)
+            _export_fallback_svg(
+                self._events,
+                path,
+                case_display_labels=self._case_display_labels,
+                region_name=self._region_name,
+            )
             return
         self.figure.savefig(path, format="svg", bbox_inches="tight", pad_inches=0.12)
 
@@ -240,35 +255,33 @@ class ExceedanceBarChartWidget(QWidget):
         """Export the current event table to CSV using the stdlib csv module."""
         with Path(path).open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
-            writer.writerow(
-                [
-                    "case_name",
-                    "event_index",
-                    "start_time",
-                    "end_time",
-                    "duration",
-                    "peak_value",
-                    "peak_time",
-                    "threshold",
-                    "region_start",
-                    "region_end",
-                ]
-            )
+            headers = [
+                "case_name",
+                "event_index",
+                "start_time",
+                "end_time",
+                "duration",
+                "peak_value",
+                "peak_time",
+                "threshold",
+                "region_start",
+                "region_end",
+            ]
+            writer.writerow(["region_name", *headers] if self._region_name else headers)
             for event in self._events:
-                writer.writerow(
-                    [
-                        event.case_name,
-                        event.event_index,
-                        event.start_time,
-                        event.end_time,
-                        event.duration,
-                        event.peak_value,
-                        event.peak_time,
-                        event.threshold,
-                        event.region_start,
-                        event.region_end,
-                    ]
-                )
+                row = [
+                    event.case_name,
+                    event.event_index,
+                    event.start_time,
+                    event.end_time,
+                    event.duration,
+                    event.peak_value,
+                    event.peak_time,
+                    event.threshold,
+                    event.region_start,
+                    event.region_end,
+                ]
+                writer.writerow([self._region_name, *row] if self._region_name else row)
 
     def _bar_picked(self, pick_event) -> None:
         event = self._patch_events.get(pick_event.artist)
@@ -306,7 +319,10 @@ class ExceedanceBarChartWidget(QWidget):
         plot_item = self.canvas.plotItem
         plot_item.clear()
         self._configure_fallback_plot()
-        plot_item.setTitle("Exceedance durations by case")
+        title = "Exceedance durations by case"
+        if self._region_name:
+            title = f"{title}<br><span style='font-size:10pt'>Region: {_html_escape(self._region_name)}</span>"
+        plot_item.setTitle(title)
         plot_item.setLabel("bottom", "Case")
         plot_item.setLabel("left", f"Duration above threshold ({self.time_unit})")
 
@@ -594,6 +610,7 @@ def _export_fallback_svg(
     path: str | Path,
     *,
     case_display_labels: dict[str, str] | None = None,
+    region_name: str = "",
 ) -> None:
     grouped = _group_events_by_case(events)
     cases = list(grouped)
@@ -626,17 +643,24 @@ def _export_fallback_svg(
     legend_y = 96
     x_label_font_size = 14 if case_count <= 45 else 13
     value_font_size = 14 if case_count <= 45 else 13
+    region_text = str(region_name or "").strip()
     lines = [
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="white"/>',
         '<text x="28" y="42" font-family="Arial" font-size="28">Exceedance durations by case</text>',
         f'<text x="28" y="70" font-family="Arial" font-size="16">Events: {len(events)}</text>',
-        f'<rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d4d4d8" stroke-width="0.7"/>',
-        f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
-        f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
-        f'<text x="{plot_x + plot_width / 2:.1f}" y="{height - 24}" font-family="Arial" font-size="18" text-anchor="middle">Case</text>',
-        f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="18" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
     ]
+    if region_text:
+        lines.append(f'<text x="28" y="96" font-family="Arial" font-size="16">Region: {_xml_escape(region_text)}</text>')
+    lines.extend(
+        [
+            f'<rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d4d4d8" stroke-width="0.7"/>',
+            f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
+            f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
+            f'<text x="{plot_x + plot_width / 2:.1f}" y="{height - 24}" font-family="Arial" font-size="18" text-anchor="middle">Case</text>',
+            f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="18" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">Duration above threshold</text>',
+        ]
+    )
     for tick_index in range(5):
         value = y_scale_max * tick_index / 4
         y = plot_y + plot_height - (value / y_scale_max) * plot_height
@@ -711,6 +735,10 @@ def _export_fallback_svg(
 
 def _xml_escape(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _html_escape(value: str) -> str:
+    return _xml_escape(value).replace('"', "&quot;")
 
 
 # Backward-compatible name used by earlier code in this repository.

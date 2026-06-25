@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
 import numpy as np
@@ -79,6 +79,8 @@ class TimeSeriesPlotWidget(QWidget):
         self._dividers: dict[str, DividerHandle] = {}
         self._threshold_line: pg.InfiniteLine | None = None
         self._updating_slider = False
+        self._save_dialog_initial_path: Callable[[str], str] | None = None
+        self._save_dialog_path_selected: Callable[[str], None] | None = None
 
         self._tracer_line = pg.InfiniteLine(
             angle=90,
@@ -363,6 +365,15 @@ class TimeSeriesPlotWidget(QWidget):
         handle = self._curves.get(name)
         if handle is not None:
             handle.item.setPen(self._make_pen(handle.color, emphasized=emphasized, dashed=handle.dashed))
+
+    def set_save_dialog_helpers(
+        self,
+        initial_path: Callable[[str], str] | None,
+        path_selected: Callable[[str], None] | None,
+    ) -> None:
+        """Use controller-provided save-dialog folder memory for context exports."""
+        self._save_dialog_initial_path = initial_path
+        self._save_dialog_path_selected = path_selected
 
     def set_tracer_time(self, value: float | None) -> None:
         """Compatibility helper for earlier code."""
@@ -695,9 +706,16 @@ class TimeSeriesPlotWidget(QWidget):
             self._export_svg_dialog()
 
     def _export_svg_dialog(self) -> None:
-        path, _ = QFileDialog.getSaveFileName(self, "Export plot SVG", "time_series.svg", "SVG files (*.svg)")
+        default_path = (
+            self._save_dialog_initial_path("time_series.svg")
+            if self._save_dialog_initial_path is not None
+            else "time_series.svg"
+        )
+        path, _ = QFileDialog.getSaveFileName(self, "Export plot SVG", default_path, "SVG files (*.svg)")
         if path:
             self.export_svg(path)
+            if self._save_dialog_path_selected is not None:
+                self._save_dialog_path_selected(path)
 
     def _divider_line_moved(self, divider_id: str, line: pg.InfiniteLine) -> None:
         handle = self._dividers.get(divider_id)

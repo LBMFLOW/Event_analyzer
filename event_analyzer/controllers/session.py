@@ -21,6 +21,7 @@ class SessionState:
     dividers: list[dict[str, object]] = field(default_factory=list)
     threshold: float | None = None
     region: tuple[float, float] | None = None
+    region_name: str = ""
     colors: dict[str, str] = field(default_factory=dict)
     visibility: dict[str, bool] = field(default_factory=dict)
     theme: str = "light"

@@ -61,6 +61,7 @@ class ExceedanceBarChartWidget(QWidget):
         self._events: list[ExceedanceEvent] = []
         self._patch_events: dict[object, ExceedanceEvent] = {}
         self._fallback_bar_bounds: list[tuple[float, float, float, ExceedanceEvent]] = []
+        self._fallback_case_labels: list[pg.TextItem] = []
         self._plot_adapter = None
 
         layout = QVBoxLayout(self)
@@ -93,6 +94,7 @@ class ExceedanceBarChartWidget(QWidget):
         self._events = sorted(events, key=lambda event: (event.case_name, event.event_index, event.start_time))
         self._patch_events.clear()
         self._fallback_bar_bounds.clear()
+        self._fallback_case_labels.clear()
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
             self._render_pyqtgraph_fallback()
             return
@@ -360,7 +362,7 @@ class ExceedanceBarChartWidget(QWidget):
         bottom_axis = plot_item.getAxis("bottom")
         bottom_axis.setTicks([[(float(position), "") for position in x_positions]])
         bottom_axis.setHeight(_fallback_axis_height(len(cases)))
-        self._add_fallback_case_labels(plot_item, cases, x_positions, label_y=-label_space * 0.1)
+        self._add_fallback_case_labels(plot_item, cases, x_positions, label_y=-label_space * 0.08)
         plot_item.setXRange(-0.75, len(cases) - 0.25, padding=0)
         plot_item.setYRange(-label_space, y_max, padding=0)
         self.status_label.setText(
@@ -369,20 +371,22 @@ class ExceedanceBarChartWidget(QWidget):
         )
 
     def _add_fallback_case_labels(self, plot_item, cases: list[str], x_positions: np.ndarray, *, label_y: float) -> None:
-        angle = -_label_rotation(len(cases))
+        angle = _label_rotation(len(cases))
         label_length = _axis_label_length(len(cases))
         for position, case_name in zip(x_positions, cases):
             label = pg.TextItem(
                 _short_case_label(case_name, max_length=label_length),
                 color="#71717a",
-                anchor=(1, 0.5),
+                anchor=(1, 0),
             )
             try:
                 label.setAngle(angle)
             except AttributeError:
                 pass
+            label.setZValue(20)
             plot_item.addItem(label, ignoreBounds=True)
             label.setPos(float(position), label_y)
+            self._fallback_case_labels.append(label)
 
     def _fallback_mouse_clicked(self, mouse_event) -> None:
         if not isinstance(self.canvas, pg.PlotWidget):
@@ -438,8 +442,8 @@ def _label_rotation(case_count: int) -> int:
     if case_count <= 6:
         return 35
     if case_count <= 20:
-        return 55
-    return 70
+        return 48
+    return 56
 
 
 def _axis_label_length(case_count: int) -> int:

@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 import re
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -79,6 +80,23 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
 
         self.assertEqual(len(widget.events), 18)
         self.assertIn("events across", widget.status_label.text())
+
+    def test_fallback_case_labels_are_rotated_below_axis(self) -> None:
+        events = [
+            ExceedanceEvent("Cell voltage - delta_OCV 2 001", 1, 0.0, 2.0, 2.0, 5.0, 1.0, 3.0, 0.0, 4.0),
+            ExceedanceEvent("Cell voltage - delta_OCV 2 002", 1, 0.0, 1.0, 1.0, 4.0, 0.5, 3.0, 0.0, 4.0),
+        ]
+
+        with patch("event_analyzer.plotting.exceedance_chart.MATPLOTLIB_AVAILABLE", False):
+            widget = ExceedanceBarChartWidget()
+            widget.set_events(events)
+
+        self.assertEqual(len(widget._fallback_case_labels), 2)
+        for label in widget._fallback_case_labels:
+            self.assertGreater(label.angle, 0)
+            self.assertLess(label.pos().y(), 0)
+            self.assertEqual((float(label.anchor.x()), float(label.anchor.y())), (1.0, 0.0))
+        widget.close()
 
     def test_fallback_svg_uses_full_labels_and_duration_values(self) -> None:
         events = [

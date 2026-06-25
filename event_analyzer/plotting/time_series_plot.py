@@ -81,6 +81,7 @@ class TimeSeriesPlotWidget(QWidget):
         self._updating_slider = False
         self._save_dialog_initial_path: Callable[[str], str] | None = None
         self._save_dialog_path_selected: Callable[[str], None] | None = None
+        self._trace_boxes_visible = True
 
         self._tracer_line = pg.InfiniteLine(
             angle=90,
@@ -309,6 +310,16 @@ class TimeSeriesPlotWidget(QWidget):
         """Show or hide the plot legend without changing plotted curves."""
         self._legend_visible = bool(visible)
         self.legend.setVisible(self._legend_visible)
+
+    def set_trace_boxes_visible(self, visible: bool) -> None:
+        """Show or hide the yellow tracer text boxes without disabling tracing."""
+        self._trace_boxes_visible = bool(visible)
+        if self._trace_boxes_visible:
+            self._update_readout(self._current_slider_time())
+            return
+        self._trace_label.hide()
+        self._trace_x_axis_label.hide()
+        self._trace_y_axis_label.hide()
 
     def set_title(self, title: str) -> None:
         """Set the plot title shown in the widget and SVG export."""
@@ -649,16 +660,17 @@ class TimeSeriesPlotWidget(QWidget):
         self._trace_y_axis_label.setText(f"y: {_format_float(value)}")
         self._position_trace_axis_labels()
         self._trace_marker.show()
-        self._trace_label.show()
-        self._trace_x_axis_label.show()
-        self._trace_y_axis_label.show()
+        self._set_trace_text_items_visible(self._trace_boxes_visible)
 
     def _hide_trace_annotation(self) -> None:
         self._trace_annotation_position = None
         self._trace_marker.hide()
-        self._trace_label.hide()
-        self._trace_x_axis_label.hide()
-        self._trace_y_axis_label.hide()
+        self._set_trace_text_items_visible(False)
+
+    def _set_trace_text_items_visible(self, visible: bool) -> None:
+        self._trace_label.setVisible(visible)
+        self._trace_x_axis_label.setVisible(visible)
+        self._trace_y_axis_label.setVisible(visible)
 
     def _scene_mouse_clicked(self, event) -> None:
         if not self.plotItem.vb.sceneBoundingRect().contains(event.scenePos()):

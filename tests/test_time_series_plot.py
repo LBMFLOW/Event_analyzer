@@ -45,6 +45,31 @@ class TimeSeriesPlotWidgetTests(unittest.TestCase):
         np.testing.assert_allclose(widget._auxiliary_values["aux_extra_tail"], [10, 11, 12])
         widget.close()
 
+    def test_trace_boxes_can_be_hidden_without_disabling_marker(self) -> None:
+        widget = TimeSeriesPlotWidget()
+        widget.set_data([0, 1, 2], {"case_a": [1, 2, 3]})
+        widget.set_active_case("case_a")
+        widget.set_slider_time(1.0)
+
+        self.assertTrue(widget._trace_marker.isVisible())
+        self.assertTrue(widget._trace_label.isVisible())
+        self.assertTrue(widget._trace_x_axis_label.isVisible())
+        self.assertTrue(widget._trace_y_axis_label.isVisible())
+
+        widget.set_trace_boxes_visible(False)
+
+        self.assertTrue(widget._trace_marker.isVisible())
+        self.assertFalse(widget._trace_label.isVisible())
+        self.assertFalse(widget._trace_x_axis_label.isVisible())
+        self.assertFalse(widget._trace_y_axis_label.isVisible())
+
+        widget.set_trace_boxes_visible(True)
+
+        self.assertTrue(widget._trace_label.isVisible())
+        self.assertTrue(widget._trace_x_axis_label.isVisible())
+        self.assertTrue(widget._trace_y_axis_label.isVisible())
+        widget.close()
+
 
 if __name__ == "__main__":
     unittest.main()

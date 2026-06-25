@@ -24,6 +24,7 @@ class SessionState:
     region_name: str = ""
     colors: dict[str, str] = field(default_factory=dict)
     visibility: dict[str, bool] = field(default_factory=dict)
+    trace_boxes_visible: bool = True
     theme: str = "light"
 
     def save(self, path: str | Path) -> None:

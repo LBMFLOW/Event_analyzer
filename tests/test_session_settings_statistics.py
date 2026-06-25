@@ -42,6 +42,7 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
             region_name="Discharge 1",
             colors={"case_a": "#ff0000"},
             visibility={"case_a": False},
+            trace_boxes_visible=False,
             theme="dark",
         )
 
@@ -61,6 +62,7 @@ class SessionSettingsStatisticsTests(unittest.TestCase):
         self.assertEqual(restored.region_name, "Discharge 1")
         self.assertEqual(restored.colors["case_a"], "#ff0000")
         self.assertFalse(restored.visibility["case_a"])
+        self.assertFalse(restored.trace_boxes_visible)
         self.assertEqual(restored.theme, "dark")
 
     def test_session_load_accepts_legacy_divider_times(self) -> None:

@@ -178,6 +178,7 @@ class ControlPanel(QWidget):
     case_visibility_changed = pyqtSignal(str, bool)
     case_color_changed = pyqtSignal(str, str)
     legend_visibility_changed = pyqtSignal(bool)
+    trace_boxes_visibility_changed = pyqtSignal(bool)
     csv_layout_apply_requested = pyqtSignal()
     plot_settings_changed = pyqtSignal()
     region_name_changed = pyqtSignal(str)
@@ -212,6 +213,8 @@ class ControlPanel(QWidget):
         self.auxiliary_axis_table = AuxiliaryAxisTable()
         self.case_style_table = CaseStyleTable()
         self.active_case_combo = QComboBox()
+        self.show_trace_boxes_checkbox = QCheckBox("Show yellow trace boxes")
+        self.show_trace_boxes_checkbox.setChecked(True)
         self.threshold_spin = QDoubleSpinBox()
         self.threshold_spin.setDecimals(8)
         self.threshold_spin.setRange(-1e18, 1e18)
@@ -363,6 +366,13 @@ class ControlPanel(QWidget):
             elif cases:
                 self.active_case_combo.setCurrentIndex(0)
 
+    def trace_boxes_visible(self) -> bool:
+        return self.show_trace_boxes_checkbox.isChecked()
+
+    def set_trace_boxes_visible(self, visible: bool) -> None:
+        with QSignalBlocker(self.show_trace_boxes_checkbox):
+            self.show_trace_boxes_checkbox.setChecked(bool(visible))
+
     def set_case_styles(
         self,
         cases: list[str],
@@ -445,6 +455,7 @@ class ControlPanel(QWidget):
         trace_group = QGroupBox("Tracer")
         trace_layout = QFormLayout(trace_group)
         trace_layout.addRow("Active case", self.active_case_combo)
+        trace_layout.addRow(self.show_trace_boxes_checkbox)
 
         case_style_group = QGroupBox("Cases")
         case_style_layout = QVBoxLayout(case_style_group)
@@ -529,6 +540,7 @@ class ControlPanel(QWidget):
         self.case_style_table.color_changed.connect(self.case_color_changed)
         self.case_style_table.itemChanged.connect(self._case_style_item_changed)
         self.show_legend_checkbox.toggled.connect(self.legend_visibility_changed)
+        self.show_trace_boxes_checkbox.toggled.connect(self.trace_boxes_visibility_changed)
         self.plot_title_edit.editingFinished.connect(self.plot_settings_changed)
         self.x_axis_title_edit.editingFinished.connect(self.plot_settings_changed)
         self.y_axis_title_edit.editingFinished.connect(self.plot_settings_changed)

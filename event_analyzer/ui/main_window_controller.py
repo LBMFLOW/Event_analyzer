@@ -101,6 +101,7 @@ class MainWindowController:
         panel.case_visibility_changed.connect(self.case_visibility_changed)
         panel.case_color_changed.connect(self.case_color_changed)
         panel.legend_visibility_changed.connect(plot.set_legend_visible)
+        panel.trace_boxes_visibility_changed.connect(plot.set_trace_boxes_visible)
         panel.csv_layout_apply_requested.connect(self.apply_csv_layout)
         panel.plot_settings_changed.connect(self.apply_plot_settings)
         panel.region_name_changed.connect(self.region_name_changed)
@@ -285,6 +286,7 @@ class MainWindowController:
         )
         self.window.control_panel.set_active_cases(target_names)
         plot.set_active_case(self.window.control_panel.active_case_combo.currentText())
+        plot.set_trace_boxes_visible(self.window.control_panel.trace_boxes_visible())
 
         time_range = data.time_range
         self.divider_manager = DividerManager(time_range=time_range)
@@ -730,6 +732,7 @@ class MainWindowController:
             region_name=self.current_region_name,
             colors=self.case_colors,
             visibility={**self.case_visibility, **self.window.control_panel.case_visibility()},
+            trace_boxes_visible=self.window.control_panel.trace_boxes_visible(),
             theme=self.settings.theme,
         )
 
@@ -743,6 +746,8 @@ class MainWindowController:
         panel.plot_title_edit.setText(session.plot_title or "Time-series plot")
         panel.x_axis_title_edit.setText(session.x_axis_title)
         panel.y_axis_title_edit.setText(session.y_axis_title)
+        panel.set_trace_boxes_visible(session.trace_boxes_visible)
+        self.window.workspace.main_plot.plot_widget.set_trace_boxes_visible(session.trace_boxes_visible)
         panel.set_time_column(session.time_column)
         self.case_colors.update(session.colors)
         self.case_visibility.update(session.visibility)

@@ -67,6 +67,8 @@ class ExceedanceCountCurveWidget(QWidget):
         self.y_axis_min_edit.setPlaceholderText("Auto")
         self.y_axis_max_edit = QLineEdit()
         self.y_axis_max_edit.setPlaceholderText("Auto")
+        self.y_tick_increment_edit = QLineEdit()
+        self.y_tick_increment_edit.setPlaceholderText("Auto")
         self.axis_title_font_spin = QSpinBox()
         self.axis_title_font_spin.setRange(6, 48)
         self.axis_title_font_spin.setValue(14)
@@ -147,6 +149,10 @@ class ExceedanceCountCurveWidget(QWidget):
                 "count-curve x-axis tick increment",
             ),
             "y_range": _optional_range_from_edits(self.y_axis_min_edit, self.y_axis_max_edit, "count-curve y-axis range"),
+            "y_tick_increment": _optional_positive_float_from_edit(
+                self.y_tick_increment_edit,
+                "count-curve y-axis tick increment",
+            ),
             "axis_title_font_size": self.axis_title_font_spin.value(),
             "tick_label_font_size": self.tick_label_font_spin.value(),
         }
@@ -159,6 +165,7 @@ class ExceedanceCountCurveWidget(QWidget):
         _set_range_edits(self.x_axis_min_edit, self.x_axis_max_edit, _coerce_range(settings.get("x_range")))
         _set_range_edits(self.y_axis_min_edit, self.y_axis_max_edit, _coerce_range(settings.get("y_range")))
         self.x_tick_increment_edit.setText(_format_setting_number(_coerce_positive_float(settings.get("x_tick_increment"))))
+        self.y_tick_increment_edit.setText(_format_setting_number(_coerce_positive_float(settings.get("y_tick_increment"))))
         self.level_count_spin.setValue(int(settings.get("levels", self.level_count_spin.value()) or self.level_count_spin.value()))
         self.title_edit.setText(str(settings.get("title", self.title_edit.text()) or ""))
         self.x_axis_title_edit.setText(str(settings.get("x_axis_title", "") or ""))
@@ -215,6 +222,7 @@ class ExceedanceCountCurveWidget(QWidget):
                 tick_label_font_size=self.tick_label_font_spin.value(),
                 region_name=self._region_name,
                 x_tick_increment=self._x_tick_increment(self._last_result),
+                y_tick_increment=self._y_tick_increment(self._last_result),
             )
             return
         self.figure.savefig(path, format="svg", bbox_inches="tight", pad_inches=0.12)
@@ -235,6 +243,7 @@ class ExceedanceCountCurveWidget(QWidget):
         form.addRow("X tick increment", self.x_tick_increment_edit)
         form.addRow("Y min", self.y_axis_min_edit)
         form.addRow("Y max", self.y_axis_max_edit)
+        form.addRow("Y tick increment", self.y_tick_increment_edit)
         form.addRow("Axis title font", self.axis_title_font_spin)
         form.addRow("Tick label font", self.tick_label_font_spin)
         buttons = QHBoxLayout()
@@ -304,6 +313,7 @@ class ExceedanceCountCurveWidget(QWidget):
         axis.set_xlim(*self._x_axis_range(result))
         axis.set_ylim(*self._y_axis_range(result))
         axis.set_xticks(_axis_ticks(*self._x_axis_range(result), increment=self._x_tick_increment(result)))
+        axis.set_yticks(_axis_ticks(*self._y_axis_range(result), increment=self._y_tick_increment(result)))
         axis.tick_params(axis="both", labelsize=self.tick_label_font_spin.value())
         axis.grid(True, alpha=0.25)
         if self._region_name:
@@ -361,6 +371,7 @@ class ExceedanceCountCurveWidget(QWidget):
         plot_item.setXRange(x_min, x_max, padding=0)
         plot_item.setYRange(y_min, y_max, padding=0)
         plot_item.getAxis("bottom").setTicks([_pyqtgraph_ticks(x_min, x_max, self._x_tick_increment(result))])
+        plot_item.getAxis("left").setTicks([_pyqtgraph_ticks(y_min, y_max, self._y_tick_increment(result))])
         self.status_label.setText(
             f"Plotted {result.thresholds.size} level(s); "
             f"{int(np.nanmax(result.counts)) if result.counts.size else 0} max exceeding case(s)."
@@ -457,6 +468,12 @@ class ExceedanceCountCurveWidget(QWidget):
             return value
         max_count = max(1.0, float(np.nanmax(result.counts)) if result.counts.size else 1.0)
         return 0.0, max_count * 1.08
+
+    def _y_tick_increment(self, result: ExceedanceCountCurve) -> float:
+        return _optional_positive_float_from_edit(
+            self.y_tick_increment_edit,
+            "count-curve y-axis tick increment",
+        ) or _nice_tick_increment(*self._y_axis_range(result))
 
 
 def _optional_range_from_edits(
@@ -589,6 +606,7 @@ def _export_fallback_svg(
     tick_label_font_size: int,
     region_name: str = "",
     x_tick_increment: float | None = None,
+    y_tick_increment: float | None = None,
 ) -> None:
     width = 1200
     height = 650
@@ -618,8 +636,7 @@ def _export_fallback_svg(
             f'<text x="34" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="{axis_title_font_size}" transform="rotate(-90 34 {plot_y + plot_height / 2:.1f})" text-anchor="middle">{_xml_escape(y_axis_title)}</text>',
         ]
     )
-    for tick_index in range(5):
-        value = y_min + y_span * tick_index / 4
+    for value in _axis_ticks(y_min, y_max, increment=y_tick_increment):
         y = plot_y + plot_height - ((value - y_min) / y_span) * plot_height
         lines.append(f'<line x1="{plot_x}" y1="{y:.1f}" x2="{plot_x + plot_width}" y2="{y:.1f}" stroke="#e4e4e7"/>')
         lines.append(

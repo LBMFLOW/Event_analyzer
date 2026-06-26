@@ -152,7 +152,7 @@ class ExceedanceCountCurveWidgetTests(unittest.TestCase):
         self.assertNotIn("D1 to D2", text)
         widget.close()
 
-    def test_fallback_svg_uses_configured_x_tick_increment(self) -> None:
+    def test_fallback_svg_uses_configured_tick_increments(self) -> None:
         with patch("event_analyzer.plotting.exceedance_count_curve.MATPLOTLIB_AVAILABLE", False):
             widget = ExceedanceCountCurveWidget()
             widget.set_source_data(
@@ -171,6 +171,9 @@ class ExceedanceCountCurveWidgetTests(unittest.TestCase):
             widget.x_axis_min_edit.setText("10")
             widget.x_axis_max_edit.setText("160")
             widget.x_tick_increment_edit.setText("20")
+            widget.y_axis_min_edit.setText("0")
+            widget.y_axis_max_edit.setText("200")
+            widget.y_tick_increment_edit.setText("50")
             widget.plot_curve()
 
             path = Path.cwd() / "test_count_curve_ticks.svg"
@@ -180,6 +183,9 @@ class ExceedanceCountCurveWidgetTests(unittest.TestCase):
         self.assertIn(">20<", text)
         self.assertIn(">40<", text)
         self.assertIn(">160<", text)
+        self.assertIn(">50<", text)
+        self.assertIn(">100<", text)
+        self.assertIn(">200<", text)
         self.assertNotIn(">47.5<", text)
         x_label_match = re.search(
             r'<text x="[\d.]+" y="([\d.]+)" font-family="Arial" font-size="\d+" text-anchor="middle">Voltage \(mV\)</text>',
@@ -190,6 +196,7 @@ class ExceedanceCountCurveWidgetTests(unittest.TestCase):
         self.assertIsNotNone(plot_match)
         self.assertLess(float(x_label_match.group(1)) - (float(plot_match.group(1)) + 430), 80)
         self.assertEqual(widget.settings()["x_tick_increment"], 20.0)
+        self.assertEqual(widget.settings()["y_tick_increment"], 50.0)
         widget.close()
 
 

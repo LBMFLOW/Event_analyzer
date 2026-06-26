@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 import os
+import re
 import unittest
 from unittest.mock import patch
 
@@ -149,6 +150,46 @@ class ExceedanceCountCurveWidgetTests(unittest.TestCase):
         text = path.read_text(encoding="utf-8")
         self.assertIn("Region: Discharge &amp; hold", text)
         self.assertNotIn("D1 to D2", text)
+        widget.close()
+
+    def test_fallback_svg_uses_configured_x_tick_increment(self) -> None:
+        with patch("event_analyzer.plotting.exceedance_count_curve.MATPLOTLIB_AVAILABLE", False):
+            widget = ExceedanceCountCurveWidget()
+            widget.set_source_data(
+                [0.0, 1.0, 2.0],
+                {
+                    "case_a": [10.0, 70.0, 160.0],
+                    "case_b": [20.0, 80.0, 150.0],
+                },
+                region=(0.0, 2.0),
+                region_name="D1 to D2",
+                default_x_axis_title="Voltage (mV)",
+            )
+            widget.threshold_min_edit.setText("10")
+            widget.threshold_max_edit.setText("160")
+            widget.level_count_spin.setValue(50)
+            widget.x_axis_min_edit.setText("10")
+            widget.x_axis_max_edit.setText("160")
+            widget.x_tick_increment_edit.setText("20")
+            widget.plot_curve()
+
+            path = Path.cwd() / "test_count_curve_ticks.svg"
+            widget.export_svg(path)
+
+        text = path.read_text(encoding="utf-8")
+        self.assertIn(">20<", text)
+        self.assertIn(">40<", text)
+        self.assertIn(">160<", text)
+        self.assertNotIn(">47.5<", text)
+        x_label_match = re.search(
+            r'<text x="[\d.]+" y="([\d.]+)" font-family="Arial" font-size="\d+" text-anchor="middle">Voltage \(mV\)</text>',
+            text,
+        )
+        plot_match = re.search(r'<rect x="108" y="([\d.]+)" width="1030" height="430"', text)
+        self.assertIsNotNone(x_label_match)
+        self.assertIsNotNone(plot_match)
+        self.assertLess(float(x_label_match.group(1)) - (float(plot_match.group(1)) + 430), 80)
+        self.assertEqual(widget.settings()["x_tick_increment"], 20.0)
         widget.close()
 
 

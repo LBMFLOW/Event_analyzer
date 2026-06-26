@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
@@ -60,6 +61,8 @@ class ExceedanceCountCurveWidget(QWidget):
         self.x_axis_min_edit.setPlaceholderText("Auto")
         self.x_axis_max_edit = QLineEdit()
         self.x_axis_max_edit.setPlaceholderText("Auto")
+        self.x_tick_increment_edit = QLineEdit()
+        self.x_tick_increment_edit.setPlaceholderText("Auto")
         self.y_axis_min_edit = QLineEdit()
         self.y_axis_min_edit.setPlaceholderText("Auto")
         self.y_axis_max_edit = QLineEdit()
@@ -139,6 +142,10 @@ class ExceedanceCountCurveWidget(QWidget):
             "x_axis_title": self.x_axis_title_edit.text().strip(),
             "y_axis_title": self.y_axis_title_edit.text().strip(),
             "x_range": _optional_range_from_edits(self.x_axis_min_edit, self.x_axis_max_edit, "count-curve x-axis range"),
+            "x_tick_increment": _optional_positive_float_from_edit(
+                self.x_tick_increment_edit,
+                "count-curve x-axis tick increment",
+            ),
             "y_range": _optional_range_from_edits(self.y_axis_min_edit, self.y_axis_max_edit, "count-curve y-axis range"),
             "axis_title_font_size": self.axis_title_font_spin.value(),
             "tick_label_font_size": self.tick_label_font_spin.value(),
@@ -151,6 +158,7 @@ class ExceedanceCountCurveWidget(QWidget):
         _set_range_edits(self.threshold_min_edit, self.threshold_max_edit, _coerce_range(settings.get("threshold_range")))
         _set_range_edits(self.x_axis_min_edit, self.x_axis_max_edit, _coerce_range(settings.get("x_range")))
         _set_range_edits(self.y_axis_min_edit, self.y_axis_max_edit, _coerce_range(settings.get("y_range")))
+        self.x_tick_increment_edit.setText(_format_setting_number(_coerce_positive_float(settings.get("x_tick_increment"))))
         self.level_count_spin.setValue(int(settings.get("levels", self.level_count_spin.value()) or self.level_count_spin.value()))
         self.title_edit.setText(str(settings.get("title", self.title_edit.text()) or ""))
         self.x_axis_title_edit.setText(str(settings.get("x_axis_title", "") or ""))
@@ -190,6 +198,8 @@ class ExceedanceCountCurveWidget(QWidget):
         """Export the current count curve to SVG."""
         if self._last_result is None:
             self.plot_curve()
+        elif self.figure is not None and MATPLOTLIB_AVAILABLE:
+            self._render_result(self._last_result)
         if self.figure is None or not MATPLOTLIB_AVAILABLE:
             if self._last_result is None:
                 raise ValueError("No count curve has been plotted.")
@@ -204,6 +214,7 @@ class ExceedanceCountCurveWidget(QWidget):
                 axis_title_font_size=self.axis_title_font_spin.value(),
                 tick_label_font_size=self.tick_label_font_spin.value(),
                 region_name=self._region_name,
+                x_tick_increment=self._x_tick_increment(self._last_result),
             )
             return
         self.figure.savefig(path, format="svg", bbox_inches="tight", pad_inches=0.12)
@@ -221,6 +232,7 @@ class ExceedanceCountCurveWidget(QWidget):
         form.addRow("Y-axis title", self.y_axis_title_edit)
         form.addRow("X min", self.x_axis_min_edit)
         form.addRow("X max", self.x_axis_max_edit)
+        form.addRow("X tick increment", self.x_tick_increment_edit)
         form.addRow("Y min", self.y_axis_min_edit)
         form.addRow("Y max", self.y_axis_max_edit)
         form.addRow("Axis title font", self.axis_title_font_spin)
@@ -287,10 +299,11 @@ class ExceedanceCountCurveWidget(QWidget):
         axis = self.figure.add_subplot(111)
         axis.plot(result.thresholds, result.counts, color="#2563eb", linewidth=2.0, drawstyle="steps-post")
         axis.set_title(self._plot_title(), fontsize=max(12, self.axis_title_font_spin.value() + 2))
-        axis.set_xlabel(self._x_axis_title(), fontsize=self.axis_title_font_spin.value())
-        axis.set_ylabel(self._y_axis_title(), fontsize=self.axis_title_font_spin.value())
+        axis.set_xlabel(self._x_axis_title(), fontsize=self.axis_title_font_spin.value(), labelpad=1)
+        axis.set_ylabel(self._y_axis_title(), fontsize=self.axis_title_font_spin.value(), labelpad=2)
         axis.set_xlim(*self._x_axis_range(result))
         axis.set_ylim(*self._y_axis_range(result))
+        axis.set_xticks(_axis_ticks(*self._x_axis_range(result), increment=self._x_tick_increment(result)))
         axis.tick_params(axis="both", labelsize=self.tick_label_font_spin.value())
         axis.grid(True, alpha=0.25)
         if self._region_name:
@@ -347,6 +360,7 @@ class ExceedanceCountCurveWidget(QWidget):
 
         plot_item.setXRange(x_min, x_max, padding=0)
         plot_item.setYRange(y_min, y_max, padding=0)
+        plot_item.getAxis("bottom").setTicks([_pyqtgraph_ticks(x_min, x_max, self._x_tick_increment(result))])
         self.status_label.setText(
             f"Plotted {result.thresholds.size} level(s); "
             f"{int(np.nanmax(result.counts)) if result.counts.size else 0} max exceeding case(s)."
@@ -431,6 +445,12 @@ class ExceedanceCountCurveWidget(QWidget):
         value = _optional_range_from_edits(self.x_axis_min_edit, self.x_axis_max_edit, "count-curve x-axis range")
         return value or (float(result.thresholds[0]), float(result.thresholds[-1]))
 
+    def _x_tick_increment(self, result: ExceedanceCountCurve) -> float:
+        return _optional_positive_float_from_edit(
+            self.x_tick_increment_edit,
+            "count-curve x-axis tick increment",
+        ) or _nice_tick_increment(*self._x_axis_range(result))
+
     def _y_axis_range(self, result: ExceedanceCountCurve) -> tuple[float, float]:
         value = _optional_range_from_edits(self.y_axis_min_edit, self.y_axis_max_edit, "count-curve y-axis range")
         if value is not None:
@@ -467,6 +487,19 @@ def _set_range_edits(min_edit: QLineEdit, max_edit: QLineEdit, value_range: tupl
     max_edit.setText("" if value_range is None else f"{value_range[1]:.12g}")
 
 
+def _optional_positive_float_from_edit(edit: QLineEdit, label: str) -> float | None:
+    value = edit.text().strip()
+    if not value:
+        return None
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{label} must use a positive numeric value, or be left blank for auto.") from exc
+    if not np.isfinite(parsed) or parsed <= 0:
+        raise ValueError(f"{label} must be greater than zero, or be left blank for auto.")
+    return parsed
+
+
 def _coerce_range(value: object) -> tuple[float, float] | None:
     if value is None:
         return None
@@ -476,6 +509,71 @@ def _coerce_range(value: object) -> tuple[float, float] | None:
     if not np.isfinite(start) or not np.isfinite(end) or start >= end:
         return None
     return start, end
+
+
+def _coerce_positive_float(value: object) -> float | None:
+    if value is None or value == "":
+        return None
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not np.isfinite(parsed) or parsed <= 0:
+        return None
+    return parsed
+
+
+def _format_setting_number(value: float | None) -> str:
+    return "" if value is None else f"{value:.12g}"
+
+
+def _nice_tick_increment(start: float, end: float, *, target_ticks: int = 8) -> float:
+    span = abs(float(end) - float(start))
+    if not np.isfinite(span) or span <= 0:
+        return 1.0
+    raw = span / max(1, target_ticks - 1)
+    magnitude = 10 ** math.floor(math.log10(raw))
+    normalized = raw / magnitude
+    if normalized <= 1:
+        factor = 1
+    elif normalized <= 2:
+        factor = 2
+    elif normalized <= 2.5:
+        factor = 2.5
+    elif normalized <= 5:
+        factor = 5
+    else:
+        factor = 10
+    return float(factor * magnitude)
+
+
+def _axis_ticks(start: float, end: float, *, increment: float | None = None) -> list[float]:
+    start = float(start)
+    end = float(end)
+    if not np.isfinite(start) or not np.isfinite(end):
+        return []
+    if start == end:
+        return [start]
+    if start > end:
+        start, end = end, start
+    step = float(increment) if increment is not None else _nice_tick_increment(start, end)
+    if not np.isfinite(step) or step <= 0:
+        step = _nice_tick_increment(start, end)
+    first = math.ceil((start / step) - 1e-10) * step
+    last = math.floor((end / step) + 1e-10) * step
+    if first > last:
+        return [start, end]
+    count = int(round((last - first) / step)) + 1
+    if count <= 0:
+        return [start, end]
+    if count > 200:
+        return _axis_ticks(start, end, increment=_nice_tick_increment(start, end))
+    ticks = [first + index * step for index in range(count)]
+    return [0.0 if abs(value) < step * 1e-10 else float(value) for value in ticks]
+
+
+def _pyqtgraph_ticks(start: float, end: float, increment: float | None) -> list[tuple[float, str]]:
+    return [(tick, _format_number(tick)) for tick in _axis_ticks(start, end, increment=increment)]
 
 
 def _export_fallback_svg(
@@ -490,13 +588,16 @@ def _export_fallback_svg(
     axis_title_font_size: int,
     tick_label_font_size: int,
     region_name: str = "",
+    x_tick_increment: float | None = None,
 ) -> None:
     width = 1200
-    height = 720
+    height = 650
     plot_x = 108
     plot_y = 118
     plot_width = 1030
     plot_height = 430
+    x_tick_label_y = plot_y + plot_height + 28
+    x_axis_title_y = plot_y + plot_height + 64
     x_min, x_max = x_range
     y_min, y_max = y_range
     x_span = max(abs(x_max - x_min), 1.0)
@@ -513,8 +614,8 @@ def _export_fallback_svg(
             f'<rect x="{plot_x}" y="{plot_y}" width="{plot_width}" height="{plot_height}" fill="none" stroke="#d4d4d8"/>',
             f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
             f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
-            f'<text x="{plot_x + plot_width / 2:.1f}" y="{height - 46}" font-family="Arial" font-size="{axis_title_font_size}" text-anchor="middle">{_xml_escape(x_axis_title)}</text>',
-            f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="{axis_title_font_size}" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">{_xml_escape(y_axis_title)}</text>',
+            f'<text x="{plot_x + plot_width / 2:.1f}" y="{x_axis_title_y:.1f}" font-family="Arial" font-size="{axis_title_font_size}" text-anchor="middle">{_xml_escape(x_axis_title)}</text>',
+            f'<text x="34" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="{axis_title_font_size}" transform="rotate(-90 34 {plot_y + plot_height / 2:.1f})" text-anchor="middle">{_xml_escape(y_axis_title)}</text>',
         ]
     )
     for tick_index in range(5):
@@ -524,14 +625,19 @@ def _export_fallback_svg(
         lines.append(
             f'<text x="{plot_x - 10}" y="{y + 5:.1f}" font-family="Arial" font-size="{tick_label_font_size}" text-anchor="end">{_format_number(value)}</text>'
         )
-    for tick_index in range(5):
-        value = x_min + x_span * tick_index / 4
+    for value in _axis_ticks(x_min, x_max, increment=x_tick_increment):
         x = plot_x + ((value - x_min) / x_span) * plot_width
+        lines.append(f'<line x1="{x:.1f}" y1="{plot_y}" x2="{x:.1f}" y2="{plot_y + plot_height}" stroke="#f1f5f9"/>')
         lines.append(
-            f'<text x="{x:.1f}" y="{plot_y + plot_height + 28}" font-family="Arial" font-size="{tick_label_font_size}" text-anchor="middle">{_format_number(value)}</text>'
+            f'<text x="{x:.1f}" y="{x_tick_label_y:.1f}" font-family="Arial" font-size="{tick_label_font_size}" text-anchor="middle">{_format_number(value)}</text>'
         )
     points: list[str] = []
-    for x_value, y_value in zip(result.thresholds, result.counts):
+    thresholds = np.asarray(result.thresholds, dtype=float)
+    counts = np.asarray(result.counts, dtype=float)
+    if thresholds.size > 1:
+        thresholds = np.repeat(thresholds, 2)[1:]
+        counts = np.repeat(counts, 2)[:-1]
+    for x_value, y_value in zip(thresholds, counts):
         if x_min <= x_value <= x_max:
             x = plot_x + ((float(x_value) - x_min) / x_span) * plot_width
             y = plot_y + plot_height - ((float(y_value) - y_min) / y_span) * plot_height

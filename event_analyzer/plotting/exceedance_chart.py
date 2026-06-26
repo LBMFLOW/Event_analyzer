@@ -214,7 +214,7 @@ class ExceedanceBarChartWidget(QWidget):
             if self._region_name:
                 self.figure.text(0.085, 0.90, f"Region: {self._region_name}", fontsize=11, color="#111827")
             axis.set_xlabel(self._resolved_x_axis_title(), fontsize=self._axis_title_font_size, labelpad=1)
-            axis.set_ylabel(self._resolved_y_axis_title(), fontsize=self._axis_title_font_size)
+            axis.set_ylabel(self._resolved_y_axis_title(), fontsize=self._axis_title_font_size, labelpad=2)
             axis.set_ylim(*_resolve_y_range(1.0, self._y_range))
             axis.text(
                 0.5,
@@ -285,7 +285,7 @@ class ExceedanceBarChartWidget(QWidget):
         if self._region_name:
             self.figure.text(0.075, 0.895, f"Region: {self._region_name}", fontsize=11, color="#111827")
         axis.set_xlabel(self._resolved_x_axis_title(), fontsize=self._axis_title_font_size, labelpad=1)
-        axis.set_ylabel(self._resolved_y_axis_title(), fontsize=self._axis_title_font_size)
+        axis.set_ylabel(self._resolved_y_axis_title(), fontsize=self._axis_title_font_size, labelpad=2)
         axis.set_xticks(x_positions)
         axis.set_xticklabels(
             [
@@ -862,7 +862,7 @@ def _export_fallback_svg(
     y_span = max(abs(y_max - y_min), 1.0)
     legend_x = plot_x
     value_font_size = 14 if case_count <= 45 else 13
-    x_axis_label_y = plot_y + plot_height + bottom_margin - 22
+    x_axis_label_y = plot_y + plot_height + min(max(62, bottom_margin - 70), 112)
     x_axis_title = str(x_axis_title or "Case")
     y_axis_title = str(y_axis_title or "Duration above threshold")
     lines = [
@@ -879,7 +879,7 @@ def _export_fallback_svg(
             f'<line x1="{plot_x}" y1="{plot_y + plot_height}" x2="{plot_x + plot_width}" y2="{plot_y + plot_height}" stroke="#111827"/>',
             f'<line x1="{plot_x}" y1="{plot_y}" x2="{plot_x}" y2="{plot_y + plot_height}" stroke="#111827"/>',
             f'<text x="{plot_x + plot_width / 2:.1f}" y="{x_axis_label_y:.1f}" font-family="Arial" font-size="{axis_title_font_size}" text-anchor="middle">{_xml_escape(x_axis_title)}</text>',
-            f'<text x="28" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="{axis_title_font_size}" transform="rotate(-90 28 {plot_y + plot_height / 2:.1f})" text-anchor="middle">{_xml_escape(y_axis_title)}</text>',
+            f'<text x="34" y="{plot_y + plot_height / 2:.1f}" font-family="Arial" font-size="{axis_title_font_size}" transform="rotate(-90 34 {plot_y + plot_height / 2:.1f})" text-anchor="middle">{_xml_escape(y_axis_title)}</text>',
         ]
     )
     for tick_index in range(5):

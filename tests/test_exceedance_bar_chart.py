@@ -198,7 +198,7 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertIsNotNone(plot_match)
         self.assertIsNotNone(x_label_match)
         self.assertGreater(float(legend_match.group(1)), float(region_match.group(1)) + 10)
-        self.assertLess(float(x_label_match.group(1)) - (float(plot_match.group(1)) + 440), 160)
+        self.assertLess(float(x_label_match.group(1)) - (float(plot_match.group(1)) + 440), 120)
         widget.close()
 
     def test_fallback_svg_uses_full_labels_and_duration_values(self) -> None:

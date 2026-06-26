@@ -4,12 +4,25 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 import textwrap
+from typing import Callable
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import QSignalBlocker, Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from PyQt6.QtWidgets import QLabel, QScrollArea, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QSplitter,
+    QVBoxLayout,
+    QWidget,
+)
 
 from event_analyzer.analysis.exceedance import ExceedanceEvent
 from event_analyzer.plotting.colors import color_for_index
@@ -59,6 +72,22 @@ class ExceedanceBarChartWidget(QWidget):
         self.scroll_area.setWidget(self.canvas)
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
+        self.x_axis_title_edit = QLineEdit()
+        self.x_axis_title_edit.setPlaceholderText("Case")
+        self.y_axis_title_edit = QLineEdit()
+        self.y_axis_title_edit.setPlaceholderText("Auto")
+        self.y_min_edit = QLineEdit()
+        self.y_min_edit.setPlaceholderText("Auto")
+        self.y_max_edit = QLineEdit()
+        self.y_max_edit.setPlaceholderText("Auto")
+        self.axis_title_font_spin = QSpinBox()
+        self.axis_title_font_spin.setRange(6, 48)
+        self.axis_title_font_spin.setValue(14)
+        self.tick_label_font_spin = QSpinBox()
+        self.tick_label_font_spin.setRange(6, 48)
+        self.tick_label_font_spin.setValue(12)
+        self.apply_button = QPushButton("Apply")
+        self.export_button = QPushButton("Export SVG")
         self._events: list[ExceedanceEvent] = []
         self._patch_events: dict[object, ExceedanceEvent] = {}
         self._fallback_bar_bounds: list[tuple[float, float, float, ExceedanceEvent]] = []
@@ -71,11 +100,11 @@ class ExceedanceBarChartWidget(QWidget):
         self._axis_title_font_size = 14
         self._tick_label_font_size = 12
         self._plot_adapter = None
+        self._save_dialog_initial_path: Callable[[str], str] | None = None
+        self._save_dialog_path_selected: Callable[[str], None] | None = None
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.scroll_area)
-        layout.addWidget(self.status_label)
+        self._build_layout()
+        self._connect_control_signals()
 
         if MATPLOTLIB_AVAILABLE:
             self.canvas.mpl_connect("pick_event", self._bar_picked)
@@ -87,6 +116,14 @@ class ExceedanceBarChartWidget(QWidget):
     @property
     def events(self) -> list[ExceedanceEvent]:
         return list(self._events)
+
+    def set_save_dialog_helpers(
+        self,
+        initial_path: Callable[[str], str] | None,
+        path_selected: Callable[[str], None] | None,
+    ) -> None:
+        self._save_dialog_initial_path = initial_path
+        self._save_dialog_path_selected = path_selected
 
     def set_time_unit(self, time_unit: str) -> None:
         """Update the duration unit displayed on the y-axis."""
@@ -111,18 +148,53 @@ class ExceedanceBarChartWidget(QWidget):
         """Set optional custom axis titles for the chart and SVG export."""
         self._x_axis_title = str(x_axis_title or "").strip()
         self._y_axis_title = str(y_axis_title or "").strip()
+        with QSignalBlocker(self.x_axis_title_edit), QSignalBlocker(self.y_axis_title_edit):
+            self.x_axis_title_edit.setText(self._x_axis_title)
+            self.y_axis_title_edit.setText(self._y_axis_title)
         self.set_events(self._events)
 
     def set_y_range(self, value_range: tuple[float, float] | None) -> None:
         """Set an optional manual y-axis range for the duration chart."""
         self._y_range = _validate_optional_range(value_range, "chart y range")
+        _set_range_edits(self.y_min_edit, self.y_max_edit, self._y_range)
         self.set_events(self._events)
 
     def set_font_sizes(self, *, axis_title_font_size: int, tick_label_font_size: int) -> None:
         """Set axis title and tick-label font sizes for the chart and SVG export."""
         self._axis_title_font_size = int(max(6, min(72, axis_title_font_size)))
         self._tick_label_font_size = int(max(6, min(72, tick_label_font_size)))
+        with QSignalBlocker(self.axis_title_font_spin), QSignalBlocker(self.tick_label_font_spin):
+            self.axis_title_font_spin.setValue(self._axis_title_font_size)
+            self.tick_label_font_spin.setValue(self._tick_label_font_size)
         self.set_events(self._events)
+
+    def chart_y_range_texts(self) -> tuple[str, str]:
+        """Return the current duration-chart y-axis range editor text."""
+        return self.y_min_edit.text().strip(), self.y_max_edit.text().strip()
+
+    def chart_axis_titles(self) -> tuple[str, str]:
+        """Return the current duration-chart axis title editor text."""
+        return self.x_axis_title_edit.text().strip(), self.y_axis_title_edit.text().strip()
+
+    def chart_font_sizes(self) -> tuple[int, int]:
+        """Return the current duration-chart font-size editor values."""
+        return self.axis_title_font_spin.value(), self.tick_label_font_spin.value()
+
+    def apply_control_settings(self, *, show_errors: bool = True) -> bool:
+        """Apply the tab-local chart-property editors to the rendered chart."""
+        try:
+            y_range = _optional_range_from_edits(self.y_min_edit, self.y_max_edit, "exceedance chart y range")
+        except ValueError as exc:
+            if show_errors:
+                self.status_label.setText(str(exc))
+            return False
+        self._x_axis_title = self.x_axis_title_edit.text().strip()
+        self._y_axis_title = self.y_axis_title_edit.text().strip()
+        self._y_range = y_range
+        self._axis_title_font_size = int(max(6, min(72, self.axis_title_font_spin.value())))
+        self._tick_label_font_size = int(max(6, min(72, self.tick_label_font_spin.value())))
+        self.set_events(self._events)
+        return True
 
     def set_events(self, events: list[ExceedanceEvent]) -> None:
         """Render grouped duration bars from exceedance events."""
@@ -279,6 +351,69 @@ class ExceedanceBarChartWidget(QWidget):
         self.figure.savefig(path, format="svg", bbox_inches="tight", pad_inches=0.12)
 
     save_svg = export_svg
+
+    def _build_layout(self) -> None:
+        control = QWidget()
+        form = QFormLayout(control)
+        form.addRow("X-axis title", self.x_axis_title_edit)
+        form.addRow("Y-axis title", self.y_axis_title_edit)
+        form.addRow("Y min", self.y_min_edit)
+        form.addRow("Y max", self.y_max_edit)
+        form.addRow("Axis title font", self.axis_title_font_spin)
+        form.addRow("Tick label font", self.tick_label_font_spin)
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.apply_button)
+        buttons.addWidget(self.export_button)
+        form.addRow(buttons)
+        form.addRow(self.status_label)
+
+        control_scroll = QScrollArea()
+        control_scroll.setWidgetResizable(True)
+        control_scroll.setWidget(control)
+        control_scroll.setMinimumWidth(270)
+        control_scroll.setMaximumWidth(360)
+
+        chart_area = QWidget()
+        chart_layout = QVBoxLayout(chart_area)
+        chart_layout.setContentsMargins(0, 0, 0, 0)
+        chart_layout.addWidget(self.scroll_area)
+
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(control_scroll)
+        splitter.addWidget(chart_area)
+        splitter.setSizes([300, 900])
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(splitter)
+
+    def _connect_control_signals(self) -> None:
+        self.apply_button.clicked.connect(lambda: self.apply_control_settings(show_errors=True))
+        self.export_button.clicked.connect(self._export_button_clicked)
+        self.x_axis_title_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
+        self.y_axis_title_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
+        self.y_min_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
+        self.y_max_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
+        self.axis_title_font_spin.valueChanged.connect(lambda _value: self.apply_control_settings(show_errors=True))
+        self.tick_label_font_spin.valueChanged.connect(lambda _value: self.apply_control_settings(show_errors=True))
+
+    def _export_button_clicked(self) -> None:
+        default_path = (
+            self._save_dialog_initial_path("exceedance_durations.svg")
+            if self._save_dialog_initial_path is not None
+            else "exceedance_durations.svg"
+        )
+        path, _ = QFileDialog.getSaveFileName(self, "Export duration chart SVG", default_path, "SVG files (*.svg)")
+        if not path:
+            return
+        try:
+            self.export_svg(path)
+        except Exception as exc:
+            self.status_label.setText(f"Export failed: {exc}")
+            return
+        if self._save_dialog_path_selected is not None:
+            self._save_dialog_path_selected(path)
+        self.status_label.setText(f"Exported SVG: {path}")
 
     def export_csv(self, path: str | Path) -> None:
         """Export the current event table to CSV using the stdlib csv module."""
@@ -518,6 +653,27 @@ def _validate_optional_range(value_range: tuple[float, float] | None, name: str)
     if not np.isfinite(start) or not np.isfinite(end) or start >= end:
         raise ValueError(f"{name} must contain finite values with minimum less than maximum.")
     return start, end
+
+
+def _optional_range_from_edits(min_edit: QLineEdit, max_edit: QLineEdit, label: str) -> tuple[float, float] | None:
+    minimum = min_edit.text().strip()
+    maximum = max_edit.text().strip()
+    if not minimum and not maximum:
+        return None
+    if not minimum or not maximum:
+        raise ValueError(f"Enter both minimum and maximum for {label}, or leave both blank for auto range.")
+    try:
+        start = float(minimum)
+        end = float(maximum)
+    except ValueError as exc:
+        raise ValueError(f"{label} must use numeric minimum and maximum values.") from exc
+    return _validate_optional_range((start, end), label)
+
+
+def _set_range_edits(min_edit: QLineEdit, max_edit: QLineEdit, value_range: tuple[float, float] | None) -> None:
+    with QSignalBlocker(min_edit), QSignalBlocker(max_edit):
+        min_edit.setText("" if value_range is None else f"{value_range[0]:.12g}")
+        max_edit.setText("" if value_range is None else f"{value_range[1]:.12g}")
 
 
 def _resolve_y_range(auto_max: float, manual_range: tuple[float, float] | None) -> tuple[float, float]:

@@ -98,6 +98,41 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
             self.assertTrue(all(label.get_size() == 16 for label in axis.get_yticklabels()))
         widget.close()
 
+    def test_tab_local_controls_apply_and_export_svg_button_uses_save_helpers(self) -> None:
+        widget = ExceedanceBarChartWidget()
+        widget.set_events([ExceedanceEvent("case_a", 1, 0.0, 2.0, 4.0, 5.0, 1.0, 3.0, 0.0, 4.0)])
+        widget.x_axis_title_edit.setText("Selected cases")
+        widget.y_axis_title_edit.setText("Seconds above threshold")
+        widget.y_min_edit.setText("0")
+        widget.y_max_edit.setText("20")
+        widget.axis_title_font_spin.setValue(22)
+        widget.tick_label_font_spin.setValue(18)
+
+        self.assertTrue(widget.apply_control_settings())
+        self.assertEqual(widget.chart_y_range_texts(), ("0", "20"))
+        self.assertEqual(widget.chart_axis_titles(), ("Selected cases", "Seconds above threshold"))
+        self.assertEqual(widget.chart_font_sizes(), (22, 18))
+        self.assertEqual(widget.export_button.text(), "Export SVG")
+        if widget.figure is not None:
+            axis = widget.figure.axes[0]
+            self.assertEqual(axis.get_ylim(), (0.0, 20.0))
+            self.assertEqual(axis.get_xlabel(), "Selected cases")
+            self.assertEqual(axis.get_ylabel(), "Seconds above threshold")
+
+        path = Path.cwd() / "test_exceedance_chart_tab_button.svg"
+        selected_paths: list[str] = []
+        widget.set_save_dialog_helpers(lambda _default_name: str(path), selected_paths.append)
+        with patch(
+            "event_analyzer.plotting.exceedance_chart.QFileDialog.getSaveFileName",
+            return_value=(str(path), "SVG files (*.svg)"),
+        ):
+            widget.export_button.click()
+
+        self.assertTrue(path.exists())
+        self.assertEqual(selected_paths, [str(path)])
+        self.assertIn("Exported SVG", widget.status_label.text())
+        widget.close()
+
     def test_fallback_case_labels_are_rotated_below_axis(self) -> None:
         events = [
             ExceedanceEvent("Cell voltage - delta_OCV 2 001", 1, 0.0, 2.0, 2.0, 5.0, 1.0, 3.0, 0.0, 4.0),

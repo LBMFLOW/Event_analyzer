@@ -75,6 +75,7 @@ class MainWindowController:
         panel = self.window.control_panel
         plot = self.window.workspace.main_plot.plot_widget
         plot.set_save_dialog_helpers(self._default_save_path, self._remember_save_path)
+        self.window.workspace.bar_chart.set_save_dialog_helpers(self._default_save_path, self._remember_save_path)
         self.window.workspace.count_curve.set_save_dialog_helpers(self._default_save_path, self._remember_save_path)
 
         actions.open_csv.triggered.connect(self.open_csv)
@@ -615,27 +616,7 @@ class MainWindowController:
         return True
 
     def _apply_chart_plot_settings(self, *, show_errors: bool = True) -> bool:
-        panel = self.window.control_panel
-        chart_min, chart_max = panel.chart_y_range_texts()
-        chart_x_axis_title, chart_y_axis_title = panel.chart_axis_titles()
-        axis_title_font_size, tick_label_font_size = panel.chart_font_sizes()
-        try:
-            chart_y_range = _parse_optional_range_texts(chart_min, chart_max, "exceedance chart y range")
-            chart = self.window.workspace.bar_chart
-            chart.set_axis_titles(
-                x_axis_title=chart_x_axis_title,
-                y_axis_title=chart_y_axis_title,
-            )
-            chart.set_y_range(chart_y_range)
-            chart.set_font_sizes(
-                axis_title_font_size=axis_title_font_size,
-                tick_label_font_size=tick_label_font_size,
-            )
-        except ValueError as exc:
-            if show_errors:
-                self._warn(str(exc), title="Invalid chart setting")
-            return False
-        return True
+        return self.window.workspace.bar_chart.apply_control_settings(show_errors=show_errors)
 
     def region_name_changed(self, name: str) -> None:
         selected_key = self._selected_region_tuple()
@@ -818,14 +799,14 @@ class MainWindowController:
                 "main plot target range",
             ),
             chart_y_range=_parse_optional_range_texts(
-                self.window.control_panel.chart_y_range_texts()[0],
-                self.window.control_panel.chart_y_range_texts()[1],
+                self.window.workspace.bar_chart.chart_y_range_texts()[0],
+                self.window.workspace.bar_chart.chart_y_range_texts()[1],
                 "exceedance chart y range",
             ),
-            chart_x_axis_title=self.window.control_panel.chart_axis_titles()[0],
-            chart_y_axis_title=self.window.control_panel.chart_axis_titles()[1],
-            chart_axis_title_font_size=self.window.control_panel.chart_font_sizes()[0],
-            chart_tick_label_font_size=self.window.control_panel.chart_font_sizes()[1],
+            chart_x_axis_title=self.window.workspace.bar_chart.chart_axis_titles()[0],
+            chart_y_axis_title=self.window.workspace.bar_chart.chart_axis_titles()[1],
+            chart_axis_title_font_size=self.window.workspace.bar_chart.chart_font_sizes()[0],
+            chart_tick_label_font_size=self.window.workspace.bar_chart.chart_font_sizes()[1],
             count_curve_settings=self.window.workspace.count_curve.settings(),
             dividers=self.divider_manager.serialize(),
             threshold=self.threshold_manager.value,
@@ -848,12 +829,12 @@ class MainWindowController:
         panel.x_axis_title_edit.setText(session.x_axis_title)
         panel.y_axis_title_edit.setText(session.y_axis_title)
         panel.set_main_plot_ranges(time_range=session.main_time_range, target_range=session.main_target_range)
-        panel.set_chart_y_range(session.chart_y_range)
-        panel.set_chart_axis_titles(
+        self.window.workspace.bar_chart.set_y_range(session.chart_y_range)
+        self.window.workspace.bar_chart.set_axis_titles(
             x_axis_title=session.chart_x_axis_title,
             y_axis_title=session.chart_y_axis_title,
         )
-        panel.set_chart_font_sizes(
+        self.window.workspace.bar_chart.set_font_sizes(
             axis_title_font_size=session.chart_axis_title_font_size,
             tick_label_font_size=session.chart_tick_label_font_size,
         )

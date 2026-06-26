@@ -4,7 +4,9 @@ from pathlib import Path
 from typing import Callable, Mapping, Sequence
 
 import numpy as np
+import pyqtgraph as pg
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
@@ -38,7 +40,7 @@ class ExceedanceCountCurveWidget(QWidget):
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.figure = Figure(figsize=(8.8, 4.2), tight_layout=False) if MATPLOTLIB_AVAILABLE else None
-        self.canvas = FigureCanvasQTAgg(self.figure) if MATPLOTLIB_AVAILABLE else QLabel("Matplotlib is required.")
+        self.canvas = FigureCanvasQTAgg(self.figure) if MATPLOTLIB_AVAILABLE else pg.PlotWidget()
         self.status_label = QLabel("Load target data, choose a target range, then click Plot curve.")
         self.status_label.setWordWrap(True)
 
@@ -82,6 +84,8 @@ class ExceedanceCountCurveWidget(QWidget):
         self._save_dialog_path_selected: Callable[[str], None] | None = None
 
         self._build_layout()
+        if isinstance(self.canvas, pg.PlotWidget):
+            self._configure_fallback_plot()
         self._connect_signals()
         self._render_empty_message("No count curve has been plotted yet.")
 
@@ -115,6 +119,12 @@ class ExceedanceCountCurveWidget(QWidget):
         self._last_result = None
         self._render_empty_message("Source data changed. Click Plot curve to update.")
         self.status_label.setText(f"Ready: {len(self._values_by_case)} target case(s).")
+
+    def set_region_name(self, name: str) -> None:
+        """Update the selected-region name shown in the curve and SVG export."""
+        self._region_name = str(name or "").strip()
+        if self._last_result is not None:
+            self._render_result(self._last_result)
 
     def settings(self) -> dict[str, object]:
         """Return serializable user settings for project/session save."""
@@ -271,8 +281,7 @@ class ExceedanceCountCurveWidget(QWidget):
 
     def _render_result(self, result: ExceedanceCountCurve) -> None:
         if self.figure is None or not MATPLOTLIB_AVAILABLE:
-            self.canvas.setText(f"Computed {result.thresholds.size} levels across {len(result.case_maxima)} cases.")
-            self.status_label.setText(self.canvas.text())
+            self._render_fallback_result(result)
             return
         self.figure.clear()
         axis = self.figure.add_subplot(111)
@@ -295,13 +304,82 @@ class ExceedanceCountCurveWidget(QWidget):
 
     def _render_empty_message(self, message: str) -> None:
         if self.figure is None or not MATPLOTLIB_AVAILABLE:
-            self.canvas.setText(message)
+            self._render_fallback_empty_message(message)
             return
         self.figure.clear()
         axis = self.figure.add_subplot(111)
         axis.text(0.5, 0.5, message, transform=axis.transAxes, ha="center", va="center", fontsize=12)
         axis.set_axis_off()
         self.canvas.draw_idle()
+
+    def _configure_fallback_plot(self) -> None:
+        if not isinstance(self.canvas, pg.PlotWidget):
+            return
+        self.canvas.setBackground("w")
+        self.canvas.showGrid(x=True, y=True, alpha=0.25)
+        self.canvas.plotItem.setMenuEnabled(False)
+
+    def _render_fallback_result(self, result: ExceedanceCountCurve) -> None:
+        if not isinstance(self.canvas, pg.PlotWidget):
+            return
+        plot_item = self.canvas.plotItem
+        plot_item.clear()
+        self._configure_fallback_plot()
+        self._apply_fallback_labels(plot_item)
+        x_min, x_max = self._x_axis_range(result)
+        y_min, y_max = self._y_axis_range(result)
+
+        thresholds = np.asarray(result.thresholds, dtype=float)
+        counts = np.asarray(result.counts, dtype=float)
+        if thresholds.size == 1:
+            plot_item.plot(
+                thresholds,
+                counts,
+                pen=pg.mkPen("#2563eb", width=2.4),
+                symbol="o",
+                symbolBrush=pg.mkBrush("#2563eb"),
+                symbolPen=pg.mkPen("#2563eb"),
+            )
+        else:
+            step_x = np.repeat(thresholds, 2)[1:]
+            step_y = np.repeat(counts, 2)[:-1]
+            plot_item.plot(step_x, step_y, pen=pg.mkPen("#2563eb", width=2.4))
+
+        plot_item.setXRange(x_min, x_max, padding=0)
+        plot_item.setYRange(y_min, y_max, padding=0)
+        self.status_label.setText(
+            f"Plotted {result.thresholds.size} level(s); "
+            f"{int(np.nanmax(result.counts)) if result.counts.size else 0} max exceeding case(s)."
+        )
+
+    def _render_fallback_empty_message(self, message: str) -> None:
+        if not isinstance(self.canvas, pg.PlotWidget):
+            return
+        plot_item = self.canvas.plotItem
+        plot_item.clear()
+        self._configure_fallback_plot()
+        self._apply_fallback_labels(plot_item)
+        plot_item.setXRange(0.0, 1.0, padding=0)
+        plot_item.setYRange(0.0, 1.0, padding=0)
+        label = pg.TextItem(message, color="#52525b", anchor=(0.5, 0.5))
+        plot_item.addItem(label)
+        label.setPos(0.5, 0.5)
+
+    def _apply_fallback_labels(self, plot_item: pg.PlotItem) -> None:
+        title = _html_escape(self._plot_title())
+        if self._region_name:
+            title = (
+                f"<span>{title}</span><br>"
+                f"<span style='font-size:10pt'>Region: {_html_escape(self._region_name)}</span>"
+            )
+        plot_item.setTitle(title)
+        label_style = {"font-size": f"{self.axis_title_font_spin.value()}pt"}
+        tick_font = QFont()
+        tick_font.setPointSize(self.tick_label_font_spin.value())
+        plot_item.setLabel("bottom", self._x_axis_title(), **label_style)
+        plot_item.setLabel("left", self._y_axis_title(), **label_style)
+        plot_item.getAxis("bottom").setStyle(tickFont=tick_font)
+        plot_item.getAxis("left").setStyle(tickFont=tick_font)
 
     def _fill_candidate_range_if_blank(self) -> None:
         if self.threshold_min_edit.text().strip() or self.threshold_max_edit.text().strip():
@@ -472,6 +550,10 @@ def _format_number(value: float) -> str:
 
 def _xml_escape(value: str) -> str:
     return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _html_escape(value: str) -> str:
+    return _xml_escape(value).replace('"', "&quot;").replace("'", "&#39;")
 
 
 __all__ = ["ExceedanceCountCurveWidget"]

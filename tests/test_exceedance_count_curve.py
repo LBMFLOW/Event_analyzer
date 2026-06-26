@@ -4,6 +4,7 @@ import importlib.util
 from pathlib import Path
 import os
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -14,6 +15,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 PYQT_AVAILABLE = importlib.util.find_spec("PyQt6") is not None
 
 if PYQT_AVAILABLE:
+    import pyqtgraph as pg
     from PyQt6.QtWidgets import QApplication
 
     from event_analyzer.plotting.exceedance_count_curve import ExceedanceCountCurveWidget
@@ -102,6 +104,51 @@ class ExceedanceCountCurveWidgetTests(unittest.TestCase):
         self.assertTrue(path.exists())
         text = path.read_text(encoding="utf-8", errors="ignore")
         self.assertIn("<svg", text.lower())
+        widget.close()
+
+    def test_widget_plots_with_pyqtgraph_fallback(self) -> None:
+        with patch("event_analyzer.plotting.exceedance_count_curve.MATPLOTLIB_AVAILABLE", False):
+            widget = ExceedanceCountCurveWidget()
+            widget.set_source_data(
+                [0.0, 1.0, 2.0],
+                {"case_a": [0.0, 5.0, 1.0], "case_b": [0.0, 2.0, 3.0]},
+                region=(0.0, 2.0),
+                region_name="Region A",
+                default_x_axis_title="Voltage (V)",
+            )
+            widget.threshold_min_edit.setText("0")
+            widget.threshold_max_edit.setText("5")
+            widget.level_count_spin.setValue(25)
+
+            result = widget.plot_curve()
+
+            self.assertIsInstance(widget.canvas, pg.PlotWidget)
+            self.assertEqual(result.thresholds.size, 25)
+            self.assertGreaterEqual(len(widget.canvas.plotItem.listDataItems()), 1)
+            self.assertIn("Plotted 25", widget.status_label.text())
+            widget.close()
+
+    def test_renamed_region_is_written_to_fallback_svg(self) -> None:
+        with patch("event_analyzer.plotting.exceedance_count_curve.MATPLOTLIB_AVAILABLE", False):
+            widget = ExceedanceCountCurveWidget()
+            widget.set_source_data(
+                [0.0, 1.0, 2.0],
+                {"case_a": [0.0, 5.0, 1.0], "case_b": [0.0, 2.0, 3.0]},
+                region=(0.0, 2.0),
+                region_name="D1 to D2",
+                default_x_axis_title="Voltage (V)",
+            )
+            widget.threshold_min_edit.setText("0")
+            widget.threshold_max_edit.setText("5")
+            widget.plot_curve()
+            widget.set_region_name("Discharge & hold")
+
+            path = Path.cwd() / "test_count_curve_region.svg"
+            widget.export_svg(path)
+
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("Region: Discharge &amp; hold", text)
+        self.assertNotIn("D1 to D2", text)
         widget.close()
 
 

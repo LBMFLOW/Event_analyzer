@@ -645,6 +645,7 @@ class MainWindowController:
         self.region_names[selected_key] = actual_name
         self.window.control_panel.set_region_name(actual_name)
         self.window.workspace.bar_chart.set_region_name(actual_name)
+        self.window.workspace.count_curve.set_region_name(actual_name)
         self.window.statusBar().showMessage(f"Selected region renamed: {actual_name}")
 
     def column_selection_changed(self) -> None:
@@ -733,6 +734,7 @@ class MainWindowController:
         )
         self.set_loaded_data_for_export(self.loaded_data, (region.start_time, region.end_time))
         self.window.workspace.bar_chart.set_region_name(self.current_region_name)
+        self.window.workspace.count_curve.set_region_name(self.current_region_name)
         self.threshold_manager.set_region(region.start_time, region.end_time)
         self._refresh_statistics()
         self._sync_count_curve_source()
@@ -750,6 +752,7 @@ class MainWindowController:
                 f"{region.label}: {region.start_time:.6g} to {region.end_time:.6g}"
             )
         self.window.workspace.bar_chart.set_region_name(self.current_region_name)
+        self.window.workspace.count_curve.set_region_name(self.current_region_name)
         self._sync_count_curve_source()
 
     def _refresh_statistics(self) -> None:
@@ -889,6 +892,7 @@ class MainWindowController:
             self.region_names[None] = session.region_name
             self.window.control_panel.set_region_name(session.region_name)
             self.window.workspace.bar_chart.set_region_name(session.region_name)
+            self.window.workspace.count_curve.set_region_name(session.region_name)
 
         if session.threshold is not None:
             self.window.control_panel.set_threshold_value(session.threshold)

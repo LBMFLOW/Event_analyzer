@@ -78,7 +78,7 @@ class ExceedanceCountCurveWidgetTests(unittest.TestCase):
         cls.app = QApplication.instance() or QApplication([])
 
     def tearDown(self) -> None:
-        for path in Path.cwd().glob("test_count_curve_*.svg"):
+        for path in Path.cwd().glob("test_count_curve_*"):
             if path.is_file():
                 path.unlink()
 
@@ -105,6 +105,14 @@ class ExceedanceCountCurveWidgetTests(unittest.TestCase):
         self.assertTrue(path.exists())
         text = path.read_text(encoding="utf-8", errors="ignore")
         self.assertIn("<svg", text.lower())
+
+        csv_path = Path.cwd() / "test_count_curve_export.csv"
+        widget.export_csv(csv_path)
+        csv_lines = csv_path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(csv_lines[0], "region_name,Candidate threshold,Case count")
+        self.assertEqual(csv_lines[1], ",,cases")
+        self.assertTrue(csv_lines[2].startswith("Region A,"))
+        self.assertEqual(widget.export_csv_button.text(), "Export CSV")
         widget.close()
 
     def test_widget_plots_with_pyqtgraph_fallback(self) -> None:

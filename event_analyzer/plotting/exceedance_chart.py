@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 
 from event_analyzer.analysis.exceedance import ExceedanceEvent
+from event_analyzer.data.units import split_column_unit
 from event_analyzer.plotting.colors import color_for_index
 
 try:  # Matplotlib is part of the normal app requirements, but keep imports graceful.
@@ -88,6 +89,7 @@ class ExceedanceBarChartWidget(QWidget):
         self.tick_label_font_spin.setValue(12)
         self.apply_button = QPushButton("Apply")
         self.export_button = QPushButton("Export SVG")
+        self.export_csv_button = QPushButton("Export CSV")
         self._events: list[ExceedanceEvent] = []
         self._patch_events: dict[object, ExceedanceEvent] = {}
         self._fallback_bar_bounds: list[tuple[float, float, float, ExceedanceEvent]] = []
@@ -97,6 +99,7 @@ class ExceedanceBarChartWidget(QWidget):
         self._x_axis_title = ""
         self._y_axis_title = ""
         self._y_range: tuple[float, float] | None = None
+        self._target_value_unit = ""
         self._axis_title_font_size = 14
         self._tick_label_font_size = 12
         self._plot_adapter = None
@@ -129,6 +132,10 @@ class ExceedanceBarChartWidget(QWidget):
         """Update the duration unit displayed on the y-axis."""
         self.time_unit = time_unit
         self.set_events(self._events)
+
+    def set_target_unit(self, target_unit: str) -> None:
+        """Update the target-value unit used in CSV export for threshold and peak values."""
+        self._target_value_unit = str(target_unit or "").strip()
 
     def set_plot_adapter(self, plot_adapter) -> None:
         """Attach an optional plot object with ``set_slider_time(float)``."""
@@ -364,6 +371,7 @@ class ExceedanceBarChartWidget(QWidget):
         buttons = QHBoxLayout()
         buttons.addWidget(self.apply_button)
         buttons.addWidget(self.export_button)
+        buttons.addWidget(self.export_csv_button)
         form.addRow(buttons)
         form.addRow(self.status_label)
 
@@ -390,6 +398,7 @@ class ExceedanceBarChartWidget(QWidget):
     def _connect_control_signals(self) -> None:
         self.apply_button.clicked.connect(lambda: self.apply_control_settings(show_errors=True))
         self.export_button.clicked.connect(self._export_button_clicked)
+        self.export_csv_button.clicked.connect(self._export_csv_button_clicked)
         self.x_axis_title_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
         self.y_axis_title_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
         self.y_min_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
@@ -415,6 +424,24 @@ class ExceedanceBarChartWidget(QWidget):
             self._save_dialog_path_selected(path)
         self.status_label.setText(f"Exported SVG: {path}")
 
+    def _export_csv_button_clicked(self) -> None:
+        default_path = (
+            self._save_dialog_initial_path("exceedance_durations.csv")
+            if self._save_dialog_initial_path is not None
+            else "exceedance_durations.csv"
+        )
+        path, _ = QFileDialog.getSaveFileName(self, "Export duration chart CSV", default_path, "CSV files (*.csv)")
+        if not path:
+            return
+        try:
+            self.export_csv(path)
+        except Exception as exc:
+            self.status_label.setText(f"CSV export failed: {exc}")
+            return
+        if self._save_dialog_path_selected is not None:
+            self._save_dialog_path_selected(path)
+        self.status_label.setText(f"Exported CSV: {path}")
+
     def export_csv(self, path: str | Path) -> None:
         """Export the current event table to CSV using the stdlib csv module."""
         with Path(path).open("w", newline="", encoding="utf-8") as handle:
@@ -431,7 +458,9 @@ class ExceedanceBarChartWidget(QWidget):
                 "region_start",
                 "region_end",
             ]
-            writer.writerow(["region_name", *headers] if self._region_name else headers)
+            output_headers = ["region_name", *headers] if self._region_name else headers
+            writer.writerow(output_headers)
+            writer.writerow(self._csv_units(output_headers))
             for event in self._events:
                 row = [
                     event.case_name,
@@ -446,6 +475,23 @@ class ExceedanceBarChartWidget(QWidget):
                     event.region_end,
                 ]
                 writer.writerow([self._region_name, *row] if self._region_name else row)
+
+    def _csv_units(self, headers: list[str]) -> list[str]:
+        time_unit = str(self.time_unit or "").strip()
+        if time_unit == "time units":
+            time_unit = ""
+        target_unit = self._target_value_unit or split_column_unit(self._resolved_y_axis_title())[1]
+        unit_by_header = {
+            "start_time": time_unit,
+            "end_time": time_unit,
+            "duration": time_unit,
+            "peak_value": target_unit,
+            "peak_time": time_unit,
+            "threshold": target_unit,
+            "region_start": time_unit,
+            "region_end": time_unit,
+        }
+        return [unit_by_header.get(header, "") for header in headers]
 
     def _bar_picked(self, pick_event) -> None:
         event = self._patch_events.get(pick_event.artist)

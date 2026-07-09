@@ -281,6 +281,7 @@ class MainWindowController:
         self.window.control_panel.set_plot_axis_placeholders(x_axis=default_x_label, y_axis=default_y_label)
         self.window.workspace.bar_chart.set_case_display_labels(self.case_display_labels)
         self.window.workspace.bar_chart.set_time_unit(self.column_units.get(data.time_column, "") or "time units")
+        self.window.workspace.bar_chart.set_target_unit(_common_unit(target_names, self.column_units))
         self._apply_chart_plot_settings(show_errors=False)
         for name, visible in self.case_visibility.items():
             plot.set_curve_visible(name, visible)
@@ -1030,6 +1031,11 @@ class MainWindowController:
 def _label_with_unit(label: str, unit: str) -> str:
     unit = str(unit or "").strip()
     return f"{label} ({unit})" if unit else label
+
+
+def _common_unit(names: list[str], units: dict[str, str]) -> str:
+    unique_units = {str(units.get(name, "")).strip() for name in names if str(units.get(name, "")).strip()}
+    return next(iter(unique_units)) if len(unique_units) == 1 else ""
 
 
 def _target_axis_label(target_names: list[str], units: dict[str, str]) -> str:

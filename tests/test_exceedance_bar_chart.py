@@ -37,6 +37,8 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
             ExceedanceEvent("case_b", 1, 1.0, 1.5, 0.5, 4.0, 1.2, 1.0, 0.0, 4.0),
         ]
 
+        widget.set_time_unit("s")
+        widget.set_target_unit("V")
         widget.set_events(events)
 
         self.assertEqual(len(widget.events), 3)
@@ -45,7 +47,9 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         widget.export_csv(path)
         text = path.read_text(encoding="utf-8")
 
-        self.assertIn("case_name,event_index,start_time", text)
+        lines = text.splitlines()
+        self.assertEqual(lines[0], "case_name,event_index,start_time,end_time,duration,peak_value,peak_time,threshold,region_start,region_end")
+        self.assertEqual(lines[1], ",,s,s,s,V,s,V,s,s")
         self.assertIn("case_a,1,0.5,2.5,2.0,3.0,1.0,1.0,0.0,4.0", text)
 
     def test_export_svg_without_crashing(self) -> None:
@@ -113,6 +117,7 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertEqual(widget.chart_axis_titles(), ("Selected cases", "Seconds above threshold"))
         self.assertEqual(widget.chart_font_sizes(), (22, 18))
         self.assertEqual(widget.export_button.text(), "Export SVG")
+        self.assertEqual(widget.export_csv_button.text(), "Export CSV")
         if widget.figure is not None:
             axis = widget.figure.axes[0]
             self.assertEqual(axis.get_ylim(), (0.0, 20.0))
@@ -131,6 +136,19 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertTrue(path.exists())
         self.assertEqual(selected_paths, [str(path)])
         self.assertIn("Exported SVG", widget.status_label.text())
+
+        csv_path = Path.cwd() / "test_exceedance_chart_tab_button.csv"
+        selected_csv_paths: list[str] = []
+        widget.set_save_dialog_helpers(lambda _default_name: str(csv_path), selected_csv_paths.append)
+        with patch(
+            "event_analyzer.plotting.exceedance_chart.QFileDialog.getSaveFileName",
+            return_value=(str(csv_path), "CSV files (*.csv)"),
+        ):
+            widget.export_csv_button.click()
+
+        self.assertTrue(csv_path.exists())
+        self.assertEqual(selected_csv_paths, [str(csv_path)])
+        self.assertIn("Exported CSV", widget.status_label.text())
         widget.close()
 
     def test_fallback_case_labels_are_rotated_below_axis(self) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import math
 from pathlib import Path
 from typing import Callable, Mapping, Sequence
@@ -23,6 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from event_analyzer.analysis.exceedance_count_curve import ExceedanceCountCurve, compute_exceedance_count_curve
+from event_analyzer.data.units import split_column_unit
 
 try:  # Matplotlib is a normal dependency, but keep import failures graceful.
     from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -78,6 +80,7 @@ class ExceedanceCountCurveWidget(QWidget):
 
         self.plot_button = QPushButton("Plot curve")
         self.export_button = QPushButton("Export SVG")
+        self.export_csv_button = QPushButton("Export CSV")
 
         self._time: np.ndarray | None = None
         self._values_by_case: dict[str, np.ndarray] = {}
@@ -249,6 +252,7 @@ class ExceedanceCountCurveWidget(QWidget):
         buttons = QHBoxLayout()
         buttons.addWidget(self.plot_button)
         buttons.addWidget(self.export_button)
+        buttons.addWidget(self.export_csv_button)
         form.addRow(buttons)
         form.addRow(self.status_label)
 
@@ -275,6 +279,7 @@ class ExceedanceCountCurveWidget(QWidget):
     def _connect_signals(self) -> None:
         self.plot_button.clicked.connect(self._plot_button_clicked)
         self.export_button.clicked.connect(self._export_button_clicked)
+        self.export_csv_button.clicked.connect(self._export_csv_button_clicked)
 
     def _plot_button_clicked(self) -> None:
         try:
@@ -299,6 +304,45 @@ class ExceedanceCountCurveWidget(QWidget):
         if self._save_dialog_path_selected is not None:
             self._save_dialog_path_selected(path)
         self.status_label.setText(f"Exported SVG: {path}")
+
+    def _export_csv_button_clicked(self) -> None:
+        default_path = (
+            self._save_dialog_initial_path("exceedance_count_curve.csv")
+            if self._save_dialog_initial_path is not None
+            else "exceedance_count_curve.csv"
+        )
+        path, _ = QFileDialog.getSaveFileName(self, "Export count curve CSV", default_path, "CSV files (*.csv)")
+        if not path:
+            return
+        try:
+            self.export_csv(path)
+        except Exception as exc:
+            self.status_label.setText(f"CSV export failed: {exc}")
+            return
+        if self._save_dialog_path_selected is not None:
+            self._save_dialog_path_selected(path)
+        self.status_label.setText(f"Exported CSV: {path}")
+
+    def export_csv(self, path: str | Path) -> None:
+        """Export the plotted count curve as column-oriented CSV with a units row."""
+        if self._last_result is None:
+            self.plot_curve()
+        if self._last_result is None:
+            raise ValueError("No count curve has been plotted.")
+        x_label, x_unit = split_column_unit(self._x_axis_title())
+        y_label, y_unit = split_column_unit(self._y_axis_title())
+        headers = [x_label or "threshold", y_label or "exceeding_case_count"]
+        units = [x_unit, y_unit or "cases"]
+        if self._region_name:
+            headers = ["region_name", *headers]
+            units = ["", *units]
+        with Path(path).open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(headers)
+            writer.writerow(units)
+            for threshold, count in zip(self._last_result.thresholds, self._last_result.counts):
+                row = [float(threshold), int(count)]
+                writer.writerow([self._region_name, *row] if self._region_name else row)
 
     def _render_result(self, result: ExceedanceCountCurve) -> None:
         if self.figure is None or not MATPLOTLIB_AVAILABLE:

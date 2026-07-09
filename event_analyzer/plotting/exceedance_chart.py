@@ -321,15 +321,17 @@ class ExceedanceBarChartWidget(QWidget):
                     continue
                 self._patch_events[bar] = event
                 if show_labels:
-                    axis.text(
-                        bar.get_x() + bar.get_width() / 2,
-                        bar.get_height(),
+                    axis.annotate(
                         _format_number(event.duration),
+                        xy=(bar.get_x() + bar.get_width() / 2, bar.get_height()),
+                        xytext=(0, _value_label_offset_points(self._value_label_angle)),
+                        textcoords="offset points",
                         ha="center",
                         va="bottom",
                         fontsize=self._value_label_font_size,
                         rotation=self._value_label_angle,
-                        rotation_mode="anchor",
+                        rotation_mode="default",
+                        clip_on=False,
                     )
 
         axis.set_ylim(*_resolve_y_range(max((event.duration for event in display_events), default=1.0) * 1.16, self._y_range))
@@ -364,7 +366,7 @@ class ExceedanceBarChartWidget(QWidget):
         if max_events_for_case <= 8:
             axis.legend(
                 loc="upper left",
-                bbox_to_anchor=(0.0, 1.13 if self._region_name else 1.16),
+                bbox_to_anchor=(0.0, 1.27 if self._region_name else 1.22),
                 fontsize=11,
                 ncols=min(max_events_for_case, 4),
                 frameon=False,
@@ -636,6 +638,9 @@ class ExceedanceBarChartWidget(QWidget):
         width = min(0.82 / max_events_for_case, 0.24)
         total_bars = len(display_events)
         show_labels = self.show_value_labels and total_bars <= self.value_label_limit
+        max_duration = max((event.duration for event in display_events), default=1.0)
+        y_min, y_max = _resolve_y_range(max_duration * 1.15, self._y_range)
+        y_span = max(abs(y_max - y_min), 1.0)
 
         self._set_fallback_canvas_width(case_count=len(cases))
 
@@ -678,11 +683,8 @@ class ExceedanceBarChartWidget(QWidget):
                     except AttributeError:
                         pass
                     plot_item.addItem(label)
-                    label.setPos(x_value, height)
+                    label.setPos(x_value, height + y_span * _fallback_value_label_offset_fraction(self._value_label_angle))
 
-        max_duration = max((event.duration for event in display_events), default=1.0)
-        y_min, y_max = _resolve_y_range(max_duration * 1.15, self._y_range)
-        y_span = max(abs(y_max - y_min), 1.0)
         label_space = y_span * _fallback_label_space_fraction(len(cases))
         bottom_axis = plot_item.getAxis("bottom")
         bottom_axis.setTicks([[(float(position), "") for position in x_positions]])
@@ -818,6 +820,14 @@ def _combine_events_by_case(events: list[ExceedanceEvent]) -> list[ExceedanceEve
 
 def _clamp_int(value: int, minimum: int, maximum: int) -> int:
     return int(max(minimum, min(maximum, int(value))))
+
+
+def _value_label_offset_points(angle: int) -> int:
+    return 5 if abs(int(angle)) >= 45 else 3
+
+
+def _fallback_value_label_offset_fraction(angle: int) -> float:
+    return 0.018 if abs(int(angle)) >= 45 else 0.010
 
 
 def _validate_optional_range(value_range: tuple[float, float] | None, name: str) -> tuple[float, float] | None:
@@ -991,6 +1001,10 @@ def _svg_y_for_value(value: float, *, y_min: float, y_span: float, plot_y: float
     return plot_y + plot_height - ((value - y_min) / y_span) * plot_height
 
 
+def _svg_value_label_offset(angle: int) -> int:
+    return 12 if abs(int(angle)) >= 45 else 7
+
+
 def _export_fallback_svg(
     events: list[ExceedanceEvent],
     path: str | Path,
@@ -1105,11 +1119,12 @@ def _export_fallback_svg(
                     f'fill="{color}" stroke="#3f3f46" stroke-width="0.5"/>'
                 )
                 value_x = x + bar_width * 0.45
-                value_y = max(plot_y + 18, y - 7)
+                value_y = max(plot_y + 18, y - _svg_value_label_offset(value_angle))
                 transform = f' transform="rotate({-value_angle} {value_x:.1f} {value_y:.1f})"' if value_angle else ""
                 lines.append(
                     f'<text x="{value_x:.1f}" y="{value_y:.1f}" '
-                    f'font-family="Arial" font-size="{value_font_size}" text-anchor="middle"{transform}>{duration_label}</text>'
+                    f'font-family="Arial" font-size="{value_font_size}" text-anchor="middle" '
+                    f'dominant-baseline="text-after-edge"{transform}>{duration_label}</text>'
                 )
         for case_index, case in enumerate(cases):
             x = plot_x + case_width * (case_index + 0.5)

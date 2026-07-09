@@ -343,7 +343,10 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertIn('font-size="24" transform=', text)
         self.assertIn(">Seconds above threshold</text>", text)
         self.assertIn('font-size="16" text-anchor="end">20</text>', text)
-        self.assertRegex(text, r'font-size="9" text-anchor="middle" transform="rotate\(-90 [^"]+\)">4</text>')
+        self.assertRegex(
+            text,
+            r'font-size="9" text-anchor="middle" dominant-baseline="text-after-edge" transform="rotate\(-90 [^"]+\)">4</text>',
+        )
 
 
 if __name__ == "__main__":

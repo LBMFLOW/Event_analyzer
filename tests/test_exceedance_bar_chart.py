@@ -52,6 +52,41 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertEqual(lines[1], ",,s,s,s,V,s,V,s,s")
         self.assertIn("case_a,1,0.5,2.5,2.0,3.0,1.0,1.0,0.0,4.0", text)
 
+    def test_combine_multiple_events_totals_duration_by_case(self) -> None:
+        widget = ExceedanceBarChartWidget()
+        events = [
+            ExceedanceEvent("case_a", 1, 0.5, 2.5, 2.0, 3.0, 1.0, 1.0, 0.0, 4.0),
+            ExceedanceEvent("case_a", 2, 3.0, 3.5, 0.5, 4.0, 3.2, 1.0, 0.0, 4.0),
+            ExceedanceEvent("case_b", 1, 1.0, 1.5, 0.5, 2.0, 1.2, 1.0, 0.0, 4.0),
+        ]
+
+        widget.set_time_unit("s")
+        widget.set_target_unit("V")
+        widget.set_events(events)
+        widget.combine_events_checkbox.setChecked(True)
+
+        self.assertTrue(widget.combine_multiple_events())
+        self.assertEqual(len(widget.events), 3)
+        display_events = {event.case_name: event for event in widget._display_events()}
+        self.assertEqual(set(display_events), {"case_a", "case_b"})
+        self.assertAlmostEqual(display_events["case_a"].duration, 2.5)
+        self.assertEqual(display_events["case_a"].event_index, 1)
+        self.assertEqual(display_events["case_a"].peak_value, 4.0)
+        self.assertIn("Combined 3 events", widget.status_label.text())
+
+        path = Path.cwd() / "test_exceedance_chart_combined.csv"
+        widget.export_csv(path)
+        lines = path.read_text(encoding="utf-8").splitlines()
+
+        self.assertEqual(
+            lines[0],
+            "case_name,event_index,event_count,start_time,end_time,duration,peak_value,peak_time,threshold,region_start,region_end",
+        )
+        self.assertEqual(lines[1], ",,,s,s,s,V,s,V,s,s")
+        self.assertIn("case_a,1,2,0.5,3.5,2.5,4.0,3.2,1.0,0.0,4.0", lines)
+        self.assertIn("case_b,1,1,1.0,1.5,0.5,2.0,1.2,1.0,0.0,4.0", lines)
+        widget.close()
+
     def test_export_svg_without_crashing(self) -> None:
         widget = ExceedanceBarChartWidget()
         widget.set_events([ExceedanceEvent("case_a", 1, 0.0, 1.0, 1.0, 2.0, 0.5, 1.0, 0.0, 2.0)])
@@ -118,6 +153,7 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertEqual(widget.chart_font_sizes(), (22, 18))
         self.assertEqual(widget.export_button.text(), "Export SVG")
         self.assertEqual(widget.export_csv_button.text(), "Export CSV")
+        self.assertEqual(widget.combine_events_checkbox.text(), "Combine multiple events")
         if widget.figure is not None:
             axis = widget.figure.axes[0]
             self.assertEqual(axis.get_ylim(), (0.0, 20.0))
@@ -218,6 +254,21 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertGreater(float(legend_match.group(1)), float(region_match.group(1)) + 10)
         self.assertLess(float(x_label_match.group(1)) - (float(plot_match.group(1)) + 440), 120)
         widget.close()
+
+    def test_fallback_svg_combined_mode_labels_total_bar(self) -> None:
+        events = [
+            ExceedanceEvent("case_a", 1, 0.0, 2.0, 2.0, 5.0, 1.0, 3.0, 0.0, 4.0),
+            ExceedanceEvent("case_a", 2, 3.0, 3.5, 0.5, 4.0, 3.2, 3.0, 0.0, 4.0),
+        ]
+        path = Path.cwd() / "test_exceedance_chart_combined_fallback.svg"
+
+        _export_fallback_svg(events, path, combine_multiple_events=True)
+        text = path.read_text(encoding="utf-8")
+
+        self.assertIn("Source events: 2; combined cases: 1", text)
+        self.assertIn("Total exceedance", text)
+        self.assertIn(">2.5<", text)
+        self.assertNotIn(">2<", text)
 
     def test_fallback_svg_uses_full_labels_and_duration_values(self) -> None:
         events = [

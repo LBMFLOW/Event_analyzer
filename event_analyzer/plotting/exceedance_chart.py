@@ -13,6 +13,7 @@ from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
+    QCheckBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -90,6 +91,10 @@ class ExceedanceBarChartWidget(QWidget):
         self.apply_button = QPushButton("Apply")
         self.export_button = QPushButton("Export SVG")
         self.export_csv_button = QPushButton("Export CSV")
+        self.combine_events_checkbox = QCheckBox("Combine multiple events")
+        self.combine_events_checkbox.setToolTip(
+            "Show one bar per case using the total duration of all exceedance events."
+        )
         self._events: list[ExceedanceEvent] = []
         self._patch_events: dict[object, ExceedanceEvent] = {}
         self._fallback_bar_bounds: list[tuple[float, float, float, ExceedanceEvent]] = []
@@ -100,6 +105,7 @@ class ExceedanceBarChartWidget(QWidget):
         self._y_axis_title = ""
         self._y_range: tuple[float, float] | None = None
         self._target_value_unit = ""
+        self._combine_multiple_events = False
         self._axis_title_font_size = 14
         self._tick_label_font_size = 12
         self._plot_adapter = None
@@ -187,6 +193,17 @@ class ExceedanceBarChartWidget(QWidget):
         """Return the current duration-chart font-size editor values."""
         return self.axis_title_font_spin.value(), self.tick_label_font_spin.value()
 
+    def combine_multiple_events(self) -> bool:
+        """Return whether multiple events per case are combined into one display bar."""
+        return self._combine_multiple_events
+
+    def set_combine_multiple_events(self, enabled: bool) -> None:
+        """Toggle one-bar-per-case rendering without changing the original event list."""
+        self._combine_multiple_events = bool(enabled)
+        with QSignalBlocker(self.combine_events_checkbox):
+            self.combine_events_checkbox.setChecked(self._combine_multiple_events)
+        self.set_events(self._events)
+
     def apply_control_settings(self, *, show_errors: bool = True) -> bool:
         """Apply the tab-local chart-property editors to the rendered chart."""
         try:
@@ -206,6 +223,7 @@ class ExceedanceBarChartWidget(QWidget):
     def set_events(self, events: list[ExceedanceEvent]) -> None:
         """Render grouped duration bars from exceedance events."""
         self._events = sorted(events, key=lambda event: (event.case_name, event.event_index, event.start_time))
+        display_events = self._display_events()
         self._patch_events.clear()
         self._fallback_bar_bounds.clear()
         self._fallback_case_labels.clear()
@@ -215,7 +233,7 @@ class ExceedanceBarChartWidget(QWidget):
         self.figure.clear()
         axis = self.figure.add_subplot(111)
 
-        if not self._events:
+        if not display_events:
             self._set_canvas_width(case_count=1)
             self.figure.suptitle("Exceedance durations", fontsize=18, y=0.96)
             if self._region_name:
@@ -240,13 +258,13 @@ class ExceedanceBarChartWidget(QWidget):
             self.canvas.draw_idle()
             return
 
-        grouped = _group_events_by_case(self._events)
+        grouped = _group_events_by_case(display_events)
         cases = list(grouped)
         max_events_for_case = max(len(case_events) for case_events in grouped.values())
         x_positions = np.arange(len(cases), dtype=float)
         width = min(0.82 / max_events_for_case, 0.24)
         colors = colormaps["tab20"].colors
-        total_bars = len(self._events)
+        total_bars = len(display_events)
         show_labels = self.show_value_labels and total_bars <= max(self.value_label_limit, 120)
 
         self._set_canvas_width(case_count=len(cases))
@@ -265,7 +283,7 @@ class ExceedanceBarChartWidget(QWidget):
                 x_positions + offset,
                 heights,
                 width=width,
-                label=f"Event {event_slot + 1}",
+                label="Total exceedance" if self._combine_multiple_events else f"Event {event_slot + 1}",
                 color=colors[event_slot % len(colors)],
                 picker=True,
             )
@@ -286,9 +304,9 @@ class ExceedanceBarChartWidget(QWidget):
                         fontsize=11,
                     )
 
-        axis.set_ylim(*_resolve_y_range(max((event.duration for event in self._events), default=1.0) * 1.16, self._y_range))
+        axis.set_ylim(*_resolve_y_range(max((event.duration for event in display_events), default=1.0) * 1.16, self._y_range))
         self.figure.suptitle("Exceedance durations by case", fontsize=18, y=0.975)
-        self.figure.text(0.075, 0.925, f"Events: {len(self._events)}", fontsize=11, color="#111827")
+        self.figure.text(0.075, 0.925, self._event_count_label(display_events), fontsize=11, color="#111827")
         if self._region_name:
             self.figure.text(0.075, 0.895, f"Region: {self._region_name}", fontsize=11, color="#111827")
         axis.set_xlabel(self._resolved_x_axis_title(), fontsize=self._axis_title_font_size, labelpad=1)
@@ -334,17 +352,17 @@ class ExceedanceBarChartWidget(QWidget):
                 fontsize=11,
             )
 
-        self.status_label.setText(
-            f"{len(self._events)} events across {len(cases)} cases. "
-            "Click a bar to select its event and move the plot tracer to peak time."
-        )
+        self.status_label.setText(self._status_text(display_events, case_count=len(cases)))
         self.canvas.draw_idle()
+
+    def _display_events(self) -> list[ExceedanceEvent]:
+        return _combine_events_by_case(self._events) if self._combine_multiple_events else list(self._events)
 
     def export_svg(self, path: str | Path) -> None:
         """Save the current bar chart as SVG."""
         if not MATPLOTLIB_AVAILABLE or self.figure is None:
             _export_fallback_svg(
-                self._events,
+                self._display_events(),
                 path,
                 case_display_labels=self._case_display_labels,
                 region_name=self._region_name,
@@ -353,6 +371,8 @@ class ExceedanceBarChartWidget(QWidget):
                 y_range=self._y_range,
                 axis_title_font_size=self._axis_title_font_size,
                 tick_label_font_size=self._tick_label_font_size,
+                combine_multiple_events=self._combine_multiple_events,
+                source_event_count=len(self._events),
             )
             return
         self.figure.savefig(path, format="svg", bbox_inches="tight", pad_inches=0.12)
@@ -368,6 +388,7 @@ class ExceedanceBarChartWidget(QWidget):
         form.addRow("Y max", self.y_max_edit)
         form.addRow("Axis title font", self.axis_title_font_spin)
         form.addRow("Tick label font", self.tick_label_font_spin)
+        form.addRow(self.combine_events_checkbox)
         buttons = QHBoxLayout()
         buttons.addWidget(self.apply_button)
         buttons.addWidget(self.export_button)
@@ -399,12 +420,17 @@ class ExceedanceBarChartWidget(QWidget):
         self.apply_button.clicked.connect(lambda: self.apply_control_settings(show_errors=True))
         self.export_button.clicked.connect(self._export_button_clicked)
         self.export_csv_button.clicked.connect(self._export_csv_button_clicked)
+        self.combine_events_checkbox.toggled.connect(self._combine_events_toggled)
         self.x_axis_title_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
         self.y_axis_title_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
         self.y_min_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
         self.y_max_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
         self.axis_title_font_spin.valueChanged.connect(lambda _value: self.apply_control_settings(show_errors=True))
         self.tick_label_font_spin.valueChanged.connect(lambda _value: self.apply_control_settings(show_errors=True))
+
+    def _combine_events_toggled(self, checked: bool) -> None:
+        self._combine_multiple_events = bool(checked)
+        self.set_events(self._events)
 
     def _export_button_clicked(self) -> None:
         default_path = (
@@ -444,6 +470,7 @@ class ExceedanceBarChartWidget(QWidget):
 
     def export_csv(self, path: str | Path) -> None:
         """Export the current event table to CSV using the stdlib csv module."""
+        display_events = self._display_events()
         with Path(path).open("w", newline="", encoding="utf-8") as handle:
             writer = csv.writer(handle)
             headers = [
@@ -458,22 +485,31 @@ class ExceedanceBarChartWidget(QWidget):
                 "region_start",
                 "region_end",
             ]
+            if self._combine_multiple_events:
+                headers.insert(2, "event_count")
             output_headers = ["region_name", *headers] if self._region_name else headers
             writer.writerow(output_headers)
             writer.writerow(self._csv_units(output_headers))
-            for event in self._events:
+            event_counts = _event_counts_by_case(self._events) if self._combine_multiple_events else {}
+            for event in display_events:
                 row = [
                     event.case_name,
                     event.event_index,
-                    event.start_time,
-                    event.end_time,
-                    event.duration,
-                    event.peak_value,
-                    event.peak_time,
-                    event.threshold,
-                    event.region_start,
-                    event.region_end,
                 ]
+                if self._combine_multiple_events:
+                    row.append(event_counts.get(event.case_name, 1))
+                row.extend(
+                    [
+                        event.start_time,
+                        event.end_time,
+                        event.duration,
+                        event.peak_value,
+                        event.peak_time,
+                        event.threshold,
+                        event.region_start,
+                        event.region_end,
+                    ]
+                )
                 writer.writerow([self._region_name, *row] if self._region_name else row)
 
     def _csv_units(self, headers: list[str]) -> list[str]:
@@ -516,6 +552,11 @@ class ExceedanceBarChartWidget(QWidget):
         if self._plot_adapter is not None and hasattr(self._plot_adapter, "set_slider_time"):
             self._plot_adapter.set_slider_time(event.peak_time)
 
+    def _event_count_label(self, display_events: list[ExceedanceEvent]) -> str:
+        if self._combine_multiple_events:
+            return f"Source events: {len(self._events)}; combined cases: {len(display_events)}"
+        return f"Events: {len(display_events)}"
+
     def _configure_fallback_plot(self) -> None:
         if not isinstance(self.canvas, pg.PlotWidget):
             return
@@ -541,7 +582,8 @@ class ExceedanceBarChartWidget(QWidget):
         plot_item.getAxis("bottom").setStyle(tickFont=tick_font)
         plot_item.getAxis("left").setStyle(tickFont=tick_font)
 
-        if not self._events:
+        display_events = self._display_events()
+        if not display_events:
             self._set_fallback_canvas_width(case_count=1)
             plot_item.getAxis("bottom").setTicks([[]])
             plot_item.setXRange(-0.5, 0.5, padding=0)
@@ -553,12 +595,12 @@ class ExceedanceBarChartWidget(QWidget):
             self.status_label.setText("No exceedance events")
             return
 
-        grouped = _group_events_by_case(self._events)
+        grouped = _group_events_by_case(display_events)
         cases = list(grouped)
         max_events_for_case = max(len(case_events) for case_events in grouped.values())
         x_positions = np.arange(len(cases), dtype=float)
         width = min(0.82 / max_events_for_case, 0.24)
-        total_bars = len(self._events)
+        total_bars = len(display_events)
         show_labels = self.show_value_labels and total_bars <= self.value_label_limit
 
         self._set_fallback_canvas_width(case_count=len(cases))
@@ -597,7 +639,7 @@ class ExceedanceBarChartWidget(QWidget):
                     plot_item.addItem(label)
                     label.setPos(x_value, height)
 
-        max_duration = max((event.duration for event in self._events), default=1.0)
+        max_duration = max((event.duration for event in display_events), default=1.0)
         y_min, y_max = _resolve_y_range(max_duration * 1.15, self._y_range)
         y_span = max(abs(y_max - y_min), 1.0)
         label_space = y_span * _fallback_label_space_fraction(len(cases))
@@ -607,10 +649,7 @@ class ExceedanceBarChartWidget(QWidget):
         self._add_fallback_case_labels(plot_item, cases, x_positions, label_y=y_min - label_space * 0.08)
         plot_item.setXRange(-0.75, len(cases) - 0.25, padding=0)
         plot_item.setYRange(y_min - label_space, y_max, padding=0)
-        self.status_label.setText(
-            f"{len(self._events)} events across {len(cases)} cases. "
-            "Click a bar to select its event and move the plot tracer to peak time."
-        )
+        self.status_label.setText(self._status_text(display_events, case_count=len(cases)))
 
     def _add_fallback_case_labels(self, plot_item, cases: list[str], x_positions: np.ndarray, *, label_y: float) -> None:
         angle = _label_rotation(len(cases))
@@ -682,6 +721,17 @@ class ExceedanceBarChartWidget(QWidget):
         width = max(900, min(2400, int(38 * max(1, case_count) + 320)))
         self.canvas.setMinimumSize(width, _fallback_canvas_height(case_count))
 
+    def _status_text(self, display_events: list[ExceedanceEvent], *, case_count: int) -> str:
+        if self._combine_multiple_events:
+            return (
+                f"Combined {len(self._events)} events into one duration bar for each of {case_count} cases. "
+                "Click a bar to select the case and move the plot tracer to the peak time."
+            )
+        return (
+            f"{len(display_events)} events across {case_count} cases. "
+            "Click a bar to select its event and move the plot tracer to peak time."
+        )
+
 
 def _group_events_by_case(events: list[ExceedanceEvent]) -> dict[str, list[ExceedanceEvent]]:
     grouped: dict[str, list[ExceedanceEvent]] = defaultdict(list)
@@ -690,6 +740,39 @@ def _group_events_by_case(events: list[ExceedanceEvent]) -> dict[str, list[Excee
     for case_events in grouped.values():
         case_events.sort(key=lambda event: (event.event_index, event.start_time))
     return dict(sorted(grouped.items(), key=lambda item: item[0]))
+
+
+def _event_counts_by_case(events: list[ExceedanceEvent]) -> dict[str, int]:
+    return {case: len(case_events) for case, case_events in _group_events_by_case(events).items()}
+
+
+def _combine_events_by_case(events: list[ExceedanceEvent]) -> list[ExceedanceEvent]:
+    """Return one synthetic event per case with summed exceedance duration.
+
+    The source events remain untouched. The aggregate start/end span the first
+    and last exceedance for the case, while duration is the sum of event
+    durations so separated exceedances are not treated as continuous time.
+    """
+    combined: list[ExceedanceEvent] = []
+    for case_name, case_events in _group_events_by_case(events).items():
+        if not case_events:
+            continue
+        peak_event = max(case_events, key=lambda event: event.peak_value)
+        combined.append(
+            ExceedanceEvent(
+                case_name=case_name,
+                event_index=1,
+                start_time=min(event.start_time for event in case_events),
+                end_time=max(event.end_time for event in case_events),
+                duration=sum(event.duration for event in case_events),
+                peak_value=peak_event.peak_value,
+                peak_time=peak_event.peak_time,
+                threshold=case_events[0].threshold,
+                region_start=case_events[0].region_start,
+                region_end=case_events[0].region_end,
+            )
+        )
+    return combined
 
 
 def _validate_optional_range(value_range: tuple[float, float] | None, name: str) -> tuple[float, float] | None:
@@ -874,7 +957,12 @@ def _export_fallback_svg(
     y_range: tuple[float, float] | None = None,
     axis_title_font_size: int = 18,
     tick_label_font_size: int = 14,
+    combine_multiple_events: bool = False,
+    source_event_count: int | None = None,
 ) -> None:
+    if combine_multiple_events:
+        source_event_count = len(events) if source_event_count is None else source_event_count
+        events = _combine_events_by_case(events)
     grouped = _group_events_by_case(events)
     cases = list(grouped)
     display_labels = {str(key): str(value) for key, value in (case_display_labels or {}).items() if str(value)}
@@ -915,7 +1003,7 @@ def _export_fallback_svg(
         f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">',
         f'<rect width="{width}" height="{height}" fill="white"/>',
         '<text x="28" y="42" font-family="Arial" font-size="28">Exceedance durations by case</text>',
-        f'<text x="28" y="70" font-family="Arial" font-size="16">Events: {len(events)}</text>',
+        f'<text x="28" y="70" font-family="Arial" font-size="16">{_xml_escape(_fallback_event_count_label(events, combine_multiple_events=combine_multiple_events, source_event_count=source_event_count))}</text>',
     ]
     if region_text:
         lines.append(f'<text x="28" y="96" font-family="Arial" font-size="16">Region: {_xml_escape(region_text)}</text>')
@@ -991,9 +1079,10 @@ def _export_fallback_svg(
             row = event_slot // legend_columns
             x = legend_x + column * 150
             y = legend_y + row * 30
+            legend_label = "Total exceedance" if combine_multiple_events else f"Event {event_slot + 1}"
             lines.append(f'<rect x="{x}" y="{y - 14}" width="16" height="16" fill="{color_for_index(event_slot)}"/>')
             lines.append(
-                f'<text x="{x + 22}" y="{y}" font-family="Arial" font-size="16">Event {event_slot + 1}</text>'
+                f'<text x="{x + 22}" y="{y}" font-family="Arial" font-size="16">{_xml_escape(legend_label)}</text>'
             )
         if max_events_for_case > legend_slots:
             lines.append(
@@ -1002,6 +1091,15 @@ def _export_fallback_svg(
             )
     lines.append("</svg>")
     Path(path).write_text("\n".join(lines), encoding="utf-8")
+
+
+def _fallback_event_count_label(
+    events: list[ExceedanceEvent], *, combine_multiple_events: bool, source_event_count: int | None
+) -> str:
+    if combine_multiple_events:
+        source_count = source_event_count if source_event_count is not None else len(events)
+        return f"Source events: {source_count}; combined cases: {len(events)}"
+    return f"Events: {len(events)}"
 
 
 def _xml_escape(value: str) -> str:

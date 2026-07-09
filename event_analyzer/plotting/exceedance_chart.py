@@ -88,6 +88,15 @@ class ExceedanceBarChartWidget(QWidget):
         self.tick_label_font_spin = QSpinBox()
         self.tick_label_font_spin.setRange(6, 48)
         self.tick_label_font_spin.setValue(12)
+        self.value_label_font_spin = QSpinBox()
+        self.value_label_font_spin.setRange(6, 48)
+        self.value_label_font_spin.setSuffix(" pt")
+        self.value_label_font_spin.setValue(11)
+        self.value_label_angle_spin = QSpinBox()
+        self.value_label_angle_spin.setRange(-90, 90)
+        self.value_label_angle_spin.setSingleStep(15)
+        self.value_label_angle_spin.setSuffix(" deg")
+        self.value_label_angle_spin.setValue(0)
         self.apply_button = QPushButton("Apply")
         self.export_button = QPushButton("Export SVG")
         self.export_csv_button = QPushButton("Export CSV")
@@ -108,6 +117,8 @@ class ExceedanceBarChartWidget(QWidget):
         self._combine_multiple_events = False
         self._axis_title_font_size = 14
         self._tick_label_font_size = 12
+        self._value_label_font_size = 11
+        self._value_label_angle = 0
         self._plot_adapter = None
         self._save_dialog_initial_path: Callable[[str], str] | None = None
         self._save_dialog_path_selected: Callable[[str], None] | None = None
@@ -174,11 +185,20 @@ class ExceedanceBarChartWidget(QWidget):
 
     def set_font_sizes(self, *, axis_title_font_size: int, tick_label_font_size: int) -> None:
         """Set axis title and tick-label font sizes for the chart and SVG export."""
-        self._axis_title_font_size = int(max(6, min(72, axis_title_font_size)))
-        self._tick_label_font_size = int(max(6, min(72, tick_label_font_size)))
+        self._axis_title_font_size = _clamp_int(axis_title_font_size, 6, 72)
+        self._tick_label_font_size = _clamp_int(tick_label_font_size, 6, 72)
         with QSignalBlocker(self.axis_title_font_spin), QSignalBlocker(self.tick_label_font_spin):
             self.axis_title_font_spin.setValue(self._axis_title_font_size)
             self.tick_label_font_spin.setValue(self._tick_label_font_size)
+        self.set_events(self._events)
+
+    def set_value_label_style(self, *, font_size: int, angle: int) -> None:
+        """Set duration value-label font size and rotation for bars and SVG export."""
+        self._value_label_font_size = _clamp_int(font_size, 6, 72)
+        self._value_label_angle = _clamp_int(angle, -90, 90)
+        with QSignalBlocker(self.value_label_font_spin), QSignalBlocker(self.value_label_angle_spin):
+            self.value_label_font_spin.setValue(self._value_label_font_size)
+            self.value_label_angle_spin.setValue(self._value_label_angle)
         self.set_events(self._events)
 
     def chart_y_range_texts(self) -> tuple[str, str]:
@@ -192,6 +212,10 @@ class ExceedanceBarChartWidget(QWidget):
     def chart_font_sizes(self) -> tuple[int, int]:
         """Return the current duration-chart font-size editor values."""
         return self.axis_title_font_spin.value(), self.tick_label_font_spin.value()
+
+    def chart_value_label_style(self) -> tuple[int, int]:
+        """Return the current bar duration value-label font size and angle."""
+        return self.value_label_font_spin.value(), self.value_label_angle_spin.value()
 
     def combine_multiple_events(self) -> bool:
         """Return whether multiple events per case are combined into one display bar."""
@@ -215,8 +239,10 @@ class ExceedanceBarChartWidget(QWidget):
         self._x_axis_title = self.x_axis_title_edit.text().strip()
         self._y_axis_title = self.y_axis_title_edit.text().strip()
         self._y_range = y_range
-        self._axis_title_font_size = int(max(6, min(72, self.axis_title_font_spin.value())))
-        self._tick_label_font_size = int(max(6, min(72, self.tick_label_font_spin.value())))
+        self._axis_title_font_size = _clamp_int(self.axis_title_font_spin.value(), 6, 72)
+        self._tick_label_font_size = _clamp_int(self.tick_label_font_spin.value(), 6, 72)
+        self._value_label_font_size = _clamp_int(self.value_label_font_spin.value(), 6, 72)
+        self._value_label_angle = _clamp_int(self.value_label_angle_spin.value(), -90, 90)
         self.set_events(self._events)
         return True
 
@@ -301,7 +327,9 @@ class ExceedanceBarChartWidget(QWidget):
                         _format_number(event.duration),
                         ha="center",
                         va="bottom",
-                        fontsize=11,
+                        fontsize=self._value_label_font_size,
+                        rotation=self._value_label_angle,
+                        rotation_mode="anchor",
                     )
 
         axis.set_ylim(*_resolve_y_range(max((event.duration for event in display_events), default=1.0) * 1.16, self._y_range))
@@ -371,6 +399,8 @@ class ExceedanceBarChartWidget(QWidget):
                 y_range=self._y_range,
                 axis_title_font_size=self._axis_title_font_size,
                 tick_label_font_size=self._tick_label_font_size,
+                value_label_font_size=self._value_label_font_size,
+                value_label_angle=self._value_label_angle,
                 combine_multiple_events=self._combine_multiple_events,
                 source_event_count=len(self._events),
             )
@@ -388,6 +418,8 @@ class ExceedanceBarChartWidget(QWidget):
         form.addRow("Y max", self.y_max_edit)
         form.addRow("Axis title font", self.axis_title_font_spin)
         form.addRow("Tick label font", self.tick_label_font_spin)
+        form.addRow("Bar value font", self.value_label_font_spin)
+        form.addRow("Bar value angle", self.value_label_angle_spin)
         form.addRow(self.combine_events_checkbox)
         buttons = QHBoxLayout()
         buttons.addWidget(self.apply_button)
@@ -427,6 +459,8 @@ class ExceedanceBarChartWidget(QWidget):
         self.y_max_edit.editingFinished.connect(lambda: self.apply_control_settings(show_errors=True))
         self.axis_title_font_spin.valueChanged.connect(lambda _value: self.apply_control_settings(show_errors=True))
         self.tick_label_font_spin.valueChanged.connect(lambda _value: self.apply_control_settings(show_errors=True))
+        self.value_label_font_spin.valueChanged.connect(lambda _value: self.apply_control_settings(show_errors=True))
+        self.value_label_angle_spin.valueChanged.connect(lambda _value: self.apply_control_settings(show_errors=True))
 
     def _combine_events_toggled(self, checked: bool) -> None:
         self._combine_multiple_events = bool(checked)
@@ -636,6 +670,13 @@ class ExceedanceBarChartWidget(QWidget):
             if show_labels:
                 for x_value, height in zip(x_values, heights):
                     label = pg.TextItem(_format_number(height), color="#111827", anchor=(0.5, 1))
+                    font = QFont()
+                    font.setPointSize(self._value_label_font_size)
+                    label.setFont(font)
+                    try:
+                        label.setAngle(self._value_label_angle)
+                    except AttributeError:
+                        pass
                     plot_item.addItem(label)
                     label.setPos(x_value, height)
 
@@ -773,6 +814,10 @@ def _combine_events_by_case(events: list[ExceedanceEvent]) -> list[ExceedanceEve
             )
         )
     return combined
+
+
+def _clamp_int(value: int, minimum: int, maximum: int) -> int:
+    return int(max(minimum, min(maximum, int(value))))
 
 
 def _validate_optional_range(value_range: tuple[float, float] | None, name: str) -> tuple[float, float] | None:
@@ -957,6 +1002,8 @@ def _export_fallback_svg(
     y_range: tuple[float, float] | None = None,
     axis_title_font_size: int = 18,
     tick_label_font_size: int = 14,
+    value_label_font_size: int = 14,
+    value_label_angle: int = 0,
     combine_multiple_events: bool = False,
     source_event_count: int | None = None,
 ) -> None:
@@ -995,7 +1042,8 @@ def _export_fallback_svg(
     y_min, y_max = _resolve_y_range(max_duration * 1.2, _validate_optional_range(y_range, "chart y range"))
     y_span = max(abs(y_max - y_min), 1.0)
     legend_x = plot_x
-    value_font_size = 14 if case_count <= 45 else 13
+    value_font_size = _clamp_int(value_label_font_size, 6, 72)
+    value_angle = _clamp_int(value_label_angle, -90, 90)
     x_axis_label_y = plot_y + plot_height + min(max(62, bottom_margin - 70), 112)
     x_axis_title = str(x_axis_title or "Case")
     y_axis_title = str(y_axis_title or "Duration above threshold")
@@ -1056,9 +1104,12 @@ def _export_fallback_svg(
                     f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_width * 0.9:.1f}" height="{bar_height:.1f}" '
                     f'fill="{color}" stroke="#3f3f46" stroke-width="0.5"/>'
                 )
+                value_x = x + bar_width * 0.45
+                value_y = max(plot_y + 18, y - 7)
+                transform = f' transform="rotate({-value_angle} {value_x:.1f} {value_y:.1f})"' if value_angle else ""
                 lines.append(
-                    f'<text x="{x + bar_width * 0.45:.1f}" y="{max(plot_y + 18, y - 7):.1f}" '
-                    f'font-family="Arial" font-size="{value_font_size}" text-anchor="middle">{duration_label}</text>'
+                    f'<text x="{value_x:.1f}" y="{value_y:.1f}" '
+                    f'font-family="Arial" font-size="{value_font_size}" text-anchor="middle"{transform}>{duration_label}</text>'
                 )
         for case_index, case in enumerate(cases):
             x = plot_x + case_width * (case_index + 0.5)

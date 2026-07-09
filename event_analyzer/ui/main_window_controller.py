@@ -808,6 +808,8 @@ class MainWindowController:
             chart_y_axis_title=self.window.workspace.bar_chart.chart_axis_titles()[1],
             chart_axis_title_font_size=self.window.workspace.bar_chart.chart_font_sizes()[0],
             chart_tick_label_font_size=self.window.workspace.bar_chart.chart_font_sizes()[1],
+            chart_value_label_font_size=self.window.workspace.bar_chart.chart_value_label_style()[0],
+            chart_value_label_angle=self.window.workspace.bar_chart.chart_value_label_style()[1],
             count_curve_settings=self.window.workspace.count_curve.settings(),
             dividers=self.divider_manager.serialize(),
             threshold=self.threshold_manager.value,
@@ -838,6 +840,10 @@ class MainWindowController:
         self.window.workspace.bar_chart.set_font_sizes(
             axis_title_font_size=session.chart_axis_title_font_size,
             tick_label_font_size=session.chart_tick_label_font_size,
+        )
+        self.window.workspace.bar_chart.set_value_label_style(
+            font_size=session.chart_value_label_font_size,
+            angle=session.chart_value_label_angle,
         )
         self.window.workspace.count_curve.apply_settings(session.count_curve_settings)
         self._apply_chart_plot_settings(show_errors=False)

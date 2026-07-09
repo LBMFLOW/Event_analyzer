@@ -125,6 +125,7 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         widget.set_axis_titles(x_axis_title="Selected cases", y_axis_title="Seconds above limit")
         widget.set_y_range((0.0, 10.0))
         widget.set_font_sizes(axis_title_font_size=20, tick_label_font_size=16)
+        widget.set_value_label_style(font_size=9, angle=90)
         widget.set_events([ExceedanceEvent("case_a", 1, 0.0, 2.0, 4.0, 5.0, 1.0, 3.0, 0.0, 4.0)])
 
         if widget.figure is not None:
@@ -135,6 +136,11 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
             self.assertEqual(axis.xaxis.label.get_size(), 20)
             self.assertEqual(axis.yaxis.label.get_size(), 20)
             self.assertTrue(all(label.get_size() == 16 for label in axis.get_yticklabels()))
+            value_labels = [label for label in axis.texts if label.get_text() == "4"]
+            self.assertEqual(len(value_labels), 1)
+            self.assertEqual(value_labels[0].get_size(), 9)
+            self.assertEqual(value_labels[0].get_rotation(), 90.0)
+        self.assertEqual(widget.chart_value_label_style(), (9, 90))
         widget.close()
 
     def test_tab_local_controls_apply_and_export_svg_button_uses_save_helpers(self) -> None:
@@ -146,14 +152,19 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         widget.y_max_edit.setText("20")
         widget.axis_title_font_spin.setValue(22)
         widget.tick_label_font_spin.setValue(18)
+        widget.value_label_font_spin.setValue(8)
+        widget.value_label_angle_spin.setValue(75)
 
         self.assertTrue(widget.apply_control_settings())
         self.assertEqual(widget.chart_y_range_texts(), ("0", "20"))
         self.assertEqual(widget.chart_axis_titles(), ("Selected cases", "Seconds above threshold"))
         self.assertEqual(widget.chart_font_sizes(), (22, 18))
+        self.assertEqual(widget.chart_value_label_style(), (8, 75))
         self.assertEqual(widget.export_button.text(), "Export SVG")
         self.assertEqual(widget.export_csv_button.text(), "Export CSV")
         self.assertEqual(widget.combine_events_checkbox.text(), "Combine multiple events")
+        self.assertEqual(widget.value_label_font_spin.value(), 8)
+        self.assertEqual(widget.value_label_angle_spin.value(), 75)
         if widget.figure is not None:
             axis = widget.figure.axes[0]
             self.assertEqual(axis.get_ylim(), (0.0, 20.0))
@@ -323,6 +334,8 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
             y_range=(0.0, 20.0),
             axis_title_font_size=24,
             tick_label_font_size=16,
+            value_label_font_size=9,
+            value_label_angle=90,
         )
         text = path.read_text(encoding="utf-8")
 
@@ -330,6 +343,7 @@ class ExceedanceBarChartWidgetTests(unittest.TestCase):
         self.assertIn('font-size="24" transform=', text)
         self.assertIn(">Seconds above threshold</text>", text)
         self.assertIn('font-size="16" text-anchor="end">20</text>', text)
+        self.assertRegex(text, r'font-size="9" text-anchor="middle" transform="rotate\(-90 [^"]+\)">4</text>')
 
 
 if __name__ == "__main__":
